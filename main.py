@@ -1,8 +1,6 @@
 import os
 import json
 import logging
-import asyncio
-import uvicorn
 from datetime import datetime, timezone
 from fastapi import FastAPI, Request
 import telegram
@@ -136,7 +134,3 @@ async def generate_monthly_report():
         )
         
     return {"status": "ok", "report": report_text}
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port)
