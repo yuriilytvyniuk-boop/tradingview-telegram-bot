@@ -12,8 +12,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")  # ID вашої VIP-групи (наприклад -1001234567890)
+TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")  # ID вашої VIP-групи (-1003940810691)
 DB_PATH = "trades.db"
+
+# ⬇️ ВКАЖІТЬ ВАШІ АДРЕСИ КРИПТОГАМАНЦІВ BINANCE ⬇️
+WALLET_USDT_TRC20 = "THeVYP6zqgJ3jKMhNAuBxqGk47iFno6pKL"
+WALLET_USDT_BEP20 = "0x97eb6c4c2fe24798ccf24ed5d52cb228f32f5f5f"
+WALLET_USDT_SOLANA = "5Pcc4WUfA1qBas6P42WDYRre8ugAenNe5UsN6c2DyUox"
 
 app = FastAPI()
 bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN) if TELEGRAM_BOT_TOKEN else None
@@ -22,7 +27,6 @@ bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN) if TELEGRAM_BOT_TOKEN else None
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
-        # Таблиця трейдів
         await db.execute("""
             CREATE TABLE IF NOT EXISTS trades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,7 +37,6 @@ async def init_db():
                 timestamp DATETIME
             )
         """)
-        # Таблиця користувачів для підписок та пробних періодів
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -49,7 +52,7 @@ async def init_db():
 # --- ФОНОВИЙ ТАЙМЕР ДЛЯ ВИДАЛЕННЯ ПІСЛЯ 14 ДНІВ ---
 
 async def check_expired_trials():
-    """Фонова задача: щодня перевіряє, у кого закінчилися 14 днів, видаляє з каналу та надсилає пропозицію"""
+    """Фонова задача: щогодини перевіряє, у кого закінчилися 14 днів, видаляє з каналу та надсилає пропозицію"""
     while True:
         try:
             await asyncio.sleep(3600)  # Перевірка кожну годину
@@ -64,24 +67,20 @@ async def check_expired_trials():
 
                 for user_id, username in expired_users:
                     try:
-                        # Видаляємо з каналу (ban + unban залишає можливість зайти за новою підпискою)
                         await bot.ban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
                         await bot.unban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
                         
-                        # Оновлюємо статус у базі
                         await db.execute(
                             "UPDATE users SET status = 'expired' WHERE user_id = ?",
                             (user_id,)
                         )
                         await db.commit()
 
-                        # Клавіатура з 2 кнопками продовження
                         expired_keyboard = InlineKeyboardMarkup([
                             [InlineKeyboardButton("📊 Оформити VIP ($20/міс)", callback_data="btn_buy_group")],
                             [InlineKeyboardButton("🤖 Підключити Signal Bot ($100/міс)", callback_data="btn_connect_bot")]
                         ])
 
-                        # Повідомлення користувачу
                         await bot.send_message(
                             chat_id=user_id,
                             text=(
@@ -103,7 +102,6 @@ async def check_expired_trials():
 @app.on_event("startup")
 async def startup_event():
     await init_db()
-    # Запускаємо перевірку протермінованих підписок у фоновому режимі
     asyncio.create_task(check_expired_trials())
 
 # --- ДОПОМІЖНІ ФУНКЦІЇ ДЛЯ КНОПОК ТА МЕНЮ ---
@@ -128,6 +126,26 @@ def get_main_keyboard(lang="ua"):
             [InlineKeyboardButton("🇺🇦 Переключити на Українську", callback_data="lang_ua")]
         ]
     return InlineKeyboardMarkup(keyboard)
+
+def get_payment_keyboard():
+    """Клавіатура після надсилання реквізитів (лише кнопка повернення назад)"""
+    keyboard = [
+        [InlineKeyboardButton("🔙 Повернутися в меню", callback_data="btn_back_main")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def get_payment_details_text():
+    """Текст з адресами гаманців Binance та інструкцією без прямого посилання на адміна"""
+    return (
+        "💳 **Оплата підписки на VIP-групу ($20 / місяць)**\n\n"
+        "Для активації підписки перекажіть **20 USDT** на один із гаманців Binance нижче:\n\n"
+        f"🔸 **USDT (TRC20):**\n`{WALLET_USDT_TRC20}`\n\n"
+        f"🔹 **USDT (BEP20 / BNB Chain):**\n`{WALLET_USDT_BEP20}`\n\n"
+        f"🟣 **USDT (Solana):**\n`{WALLET_USDT_SOLANA}`\n\n"
+        "*(Натисніть на адресу, щоб її скопіювати)*\n\n"
+        "ℹ️ **Зверніть увагу:**\n"
+        "Після підтвердження транзакції в мережі доступ до VIP-групи буде наданий **протягом дня**."
+    )
 
 def get_text_start(lang="ua"):
     if lang == "ua":
@@ -202,10 +220,9 @@ def get_text_rules(lang="ua"):
         "🛡️ **No Scams:** Immediate permanent ban."
     )
 
-# --- ЛОГІКА ВИДАЧІ FREE ТРИАЛУ (14 ДНІВ) ---
+# --- ЛОГІКА ВИДАЧІ FREE ТРИАЛУ ---
 
 async def handle_free_trial_request(user_id: int, username: str):
-    """Перевіряє базу даних та видає одноразове посилання на 14 днів"""
     now = datetime.now(timezone.utc)
     trial_end = now + timedelta(days=14)
 
@@ -217,14 +234,12 @@ async def handle_free_trial_request(user_id: int, username: str):
             return "⚠️ **Ви вже використовували безкоштовний 14-денний період.**\n\nЯкщо бажаєте продовжити доступ, ви можете оформити підписку ($20/міс) у головному меню."
 
         try:
-            # Генеруємо одноразове посилання в групу (дійсне 1 використання)
             invite_link = await bot.create_chat_invite_link(
                 chat_id=TELEGRAM_CHANNEL_ID,
                 member_limit=1,
-                expire_date=int((now + timedelta(hours=24)).timestamp()) # Посилання активне 24 години
+                expire_date=int((now + timedelta(hours=24)).timestamp())
             )
             
-            # Записуємо користувача в базу
             await db.execute("""
                 INSERT INTO users (user_id, username, trial_used, trial_start, trial_end, status)
                 VALUES (?, ?, 1, ?, ?, 'trial')
@@ -277,9 +292,18 @@ async def telegram_webhook(request: Request):
                 response_text = await handle_free_trial_request(user_id, username)
                 await bot.send_message(chat_id=chat_id, text=response_text, parse_mode="Markdown")
             elif text == "/buy_group":
-                await bot.send_message(chat_id=chat_id, text="📊 **Доступ до VIP-групи ($20/міс)**\n\nНапишіть адміністратору для отримання реквізитів.", parse_mode="Markdown")
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=get_payment_details_text(),
+                    reply_markup=get_payment_keyboard(),
+                    parse_mode="Markdown"
+                )
             elif text == "/connect_bot":
-                await bot.send_message(chat_id=chat_id, text="🤖 **Підключення Signal Bot ($100/міс)**\n\nБудь ласка, заповніть анкету або напишіть адміну.", parse_mode="Markdown")
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text="🤖 **Підключення Signal Bot ($100/міс)**\n\nДля налаштування автоматичного виконання сигналів через бота зверніться в підтримку.",
+                    parse_mode="Markdown"
+                )
 
         # 2. Натискання на Inline-кнопки
         elif update.callback_query:
@@ -296,6 +320,8 @@ async def telegram_webhook(request: Request):
                 await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=get_text_start("ua"), reply_markup=get_main_keyboard("ua"), parse_mode="Markdown")
             elif data == "lang_en":
                 await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=get_text_start("en"), reply_markup=get_main_keyboard("en"), parse_mode="Markdown")
+            elif data == "btn_back_main":
+                await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=get_text_start("ua"), reply_markup=get_main_keyboard("ua"), parse_mode="Markdown")
             elif data == "btn_services":
                 await bot.send_message(chat_id=chat_id, text=get_text_services("ua"), parse_mode="Markdown")
             elif data == "btn_rules":
@@ -304,16 +330,25 @@ async def telegram_webhook(request: Request):
                 response_text = await handle_free_trial_request(user_id, username)
                 await bot.send_message(chat_id=chat_id, text=response_text, parse_mode="Markdown")
             elif data == "btn_buy_group":
-                await bot.send_message(chat_id=chat_id, text="📊 **VIP-група ($20/міс)**\n\nЗв'яжіться з адміном для здійснення оплати.", parse_mode="Markdown")
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=get_payment_details_text(),
+                    reply_markup=get_payment_keyboard(),
+                    parse_mode="Markdown"
+                )
             elif data == "btn_connect_bot":
-                await bot.send_message(chat_id=chat_id, text="🤖 **Підключення Signal Bot ($100/міс)**\n\nБудь ласка, заповніть анкету для налаштування.", parse_mode="Markdown")
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text="🤖 **Підключення Signal Bot ($100/міс)**\n\nДля налаштування персонального бота зверніться до адміністратора.",
+                    parse_mode="Markdown"
+                )
 
         return {"status": "ok"}
     except Exception as e:
         logger.error(f"Error handling Telegram webhook: {e}")
         return {"status": "error", "message": str(e)}
 
-# --- ТВОЇ ІСНУЮЧІ РОУТИ ДЛЯ TRADINGVIEW ТА ЗВІТІВ ---
+# --- РОУТИ ДЛЯ TRADINGVIEW ТА ЗВІТІВ ---
 
 @app.post("/webhook")
 async def webhook(request: Request):
