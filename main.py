@@ -13,12 +13,14 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")  # ID вашої VIP-групи (-1003940810691)
+ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))  # Ваш особистий Telegram ID
+
 DB_PATH = "trades.db"
 
 # ⬇️ ВКАЖІТЬ ВАШІ АДРЕСИ КРИПТОГАМАНЦІВ BINANCE ⬇️
-WALLET_USDT_TRC20 = "THeVYP6zqgJ3jKMhNAuBxqGk47iFno6pKL"
-WALLET_USDT_BEP20 = "0x97eb6c4c2fe24798ccf24ed5d52cb228f32f5f5f"
-WALLET_USDT_SOLANA = "5Pcc4WUfA1qBas6P42WDYRre8ugAenNe5UsN6c2DyUox"
+WALLET_USDT_TRC20 = "ТВІЙ_TRC20_ГАМАНЕЦЬ"
+WALLET_USDT_BEP20 = "ТВІЙ_BEP20_ГАМАНЕЦЬ"
+WALLET_USDT_SOLANA = "ТВІЙ_SOLANA_ГАМАНЕЦЬ"
 
 app = FastAPI()
 bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN) if TELEGRAM_BOT_TOKEN else None
@@ -44,36 +46,35 @@ async def init_db():
                 trial_used INTEGER DEFAULT 0,
                 trial_start DATETIME,
                 trial_end DATETIME,
+                sub_end DATETIME,
                 status TEXT DEFAULT 'free'
             )
         """)
         await db.commit()
 
-# --- ФОНОВИЙ ТАЙМЕР ДЛЯ ВИДАЛЕННЯ ПІСЛЯ 14 ДНІВ ---
+# --- ФОНОВИЙ ТАЙМЕР ДЛЯ ВИДАЛЕННЯ ПІСЛЯ 14 ДНІВ АБО ЗАВЕРШЕННЯ ПІДПИСКИ ---
 
 async def check_expired_trials():
-    """Фонова задача: щогодини перевіряє, у кого закінчилися 14 днів, видаляє з каналу та надсилає пропозицію"""
+    """Фонова задача: щогодини перевіряє закінчення триалу та підписки"""
     while True:
         try:
             await asyncio.sleep(3600)  # Перевірка кожну годину
             now = datetime.now(timezone.utc)
             
             async with aiosqlite.connect(DB_PATH) as db:
+                # 1. Завершення триалу (14 днів)
                 async with db.execute(
                     "SELECT user_id, username FROM users WHERE status = 'trial' AND trial_end <= ?",
                     (now.isoformat(),)
                 ) as cursor:
-                    expired_users = await cursor.fetchall()
+                    expired_trials = await cursor.fetchall()
 
-                for user_id, username in expired_users:
+                for user_id, username in expired_trials:
                     try:
                         await bot.ban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
                         await bot.unban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
                         
-                        await db.execute(
-                            "UPDATE users SET status = 'expired' WHERE user_id = ?",
-                            (user_id,)
-                        )
+                        await db.execute("UPDATE users SET status = 'expired' WHERE user_id = ?", (user_id,))
                         await db.commit()
 
                         expired_keyboard = InlineKeyboardMarkup([
@@ -95,6 +96,30 @@ async def check_expired_trials():
                         logger.info(f"User {user_id} ({username}) removed after trial expiration.")
                     except Exception as e:
                         logger.error(f"Failed to remove expired user {user_id}: {e}")
+
+                # 2. Завершення платній підписки
+                async with db.execute(
+                    "SELECT user_id, username FROM users WHERE status = 'active' AND sub_end <= ?",
+                    (now.isoformat(),)
+                ) as cursor:
+                    expired_subs = await cursor.fetchall()
+
+                for user_id, username in expired_subs:
+                    try:
+                        await bot.ban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
+                        await bot.unban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
+                        
+                        await db.execute("UPDATE users SET status = 'expired' WHERE user_id = ?", (user_id,))
+                        await db.commit()
+
+                        await bot.send_message(
+                            chat_id=user_id,
+                            text="⏳ **Термін вашої підписки на VIP-групу закінчився.**\n\nДля продовження підписки скористайтеся меню бота.",
+                            reply_markup=get_main_keyboard("ua"),
+                            parse_mode="Markdown"
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to remove expired sub user {user_id}: {e}")
 
         except Exception as e:
             logger.error(f"Error in check_expired_trials loop: {e}")
@@ -128,14 +153,12 @@ def get_main_keyboard(lang="ua"):
     return InlineKeyboardMarkup(keyboard)
 
 def get_payment_keyboard():
-    """Клавіатура після надсилання реквізитів (лише кнопка повернення назад)"""
     keyboard = [
         [InlineKeyboardButton("🔙 Повернутися в меню", callback_data="btn_back_main")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
 def get_payment_details_text():
-    """Текст з адресами гаманців Binance та інструкцією без прямого посилання на адміна"""
     return (
         "💳 **Оплата підписки на VIP-групу ($20 / місяць)**\n\n"
         "Для активації підписки перекажіть **20 USDT** на один із гаманців Binance нижче:\n\n"
@@ -143,8 +166,9 @@ def get_payment_details_text():
         f"🔹 **USDT (BEP20 / BNB Chain):**\n`{WALLET_USDT_BEP20}`\n\n"
         f"🟣 **USDT (Solana):**\n`{WALLET_USDT_SOLANA}`\n\n"
         "*(Натисніть на адресу, щоб її скопіювати)*\n\n"
-        "ℹ️ **Зверніть увагу:**\n"
-        "Після підтвердження транзакції в мережі доступ до VIP-групи буде наданий **протягом дня**."
+        "📥 **ЯК ПІДТВЕРДИТИ ОПЛАТУ:**\n"
+        "Після виконання переказу **надішліть квитанцію (фото, скріншот або текст з хешем транзакції) прямо сюди в чат з ботом**.\n\n"
+        "Адміністратор перевірить переказ і доступ буде надано протягом дня!"
     )
 
 def get_text_start(lang="ua"):
@@ -183,41 +207,23 @@ def get_text_start(lang="ua"):
     )
 
 def get_text_services(lang="ua"):
-    if lang == "ua":
-        return (
-            "💎 **Наші Послуги та Прайс**\n\n"
-            "📊 **VIP-група з сигналами:** **$20 / місяць**\n\n"
-            "🤖 **Персональний Signal Bot:** **$100 / місяць**\n\n"
-            "🎁 **Бонуси:**\n"
-            "• **14 днів FREE** для нових користувачів!\n"
-            "• **+14 днів** за кожного друга, який придбає підписку!"
-        )
     return (
-        "💎 **Services & Pricing**\n\n"
-        "📊 **VIP Signals Group Access:** **$20 / month**\n\n"
-        "🤖 **Personal Signal Bot Setup:** **$100 / month**\n\n"
-        "🎁 **Bonuses:**\n"
-        "• **14-Day FREE Trial** for new users!\n"
-        "• **+14 Days Free Access** for every referred friend who subscribes!"
+        "💎 **Наші Послуги та Прайс**\n\n"
+        "📊 **VIP-група з сигналами:** **$20 / місяць**\n\n"
+        "🤖 **Персональний Signal Bot:** **$100 / місяць**\n\n"
+        "🎁 **Бонуси:**\n"
+        "• **14 днів FREE** для нових користувачів!\n"
+        "• **+14 днів** за кожного друга, який придбає підписку!"
     )
 
 def get_text_rules(lang="ua"):
-    if lang == "ua":
-        return (
-            "📜 **Правила спільноти**\n\n"
-            "🚫 **Без спаму та флуду:** Масові розсилки заборонені.\n"
-            "❌ **Заборона реклами:** Реклама без дозволу заборонена.\n"
-            "🤝 **Повага та етика:** Образи та токсичність неприпустимі.\n"
-            "🤬 **Без нецензурної лексики:** Дотримуємося ввічливого спілкування.\n"
-            "🛡️ **Без шахрайства:** Спроби скаму = бан."
-        )
     return (
-        "📜 **Community Rules**\n\n"
-        "🚫 **No Spam or Flooding:** Mass messaging is prohibited.\n"
-        "❌ **No Advertising:** Self-promotion is forbidden.\n"
-        "🤝 **Respect & Courtesy:** Toxicity will not be tolerated.\n"
-        "🤬 **No Profanity:** Keep communication polite and clean.\n"
-        "🛡️ **No Scams:** Immediate permanent ban."
+        "📜 **Правила спільноти**\n\n"
+        "🚫 **Без спаму та флуду:** Масові розсилки заборонені.\n"
+        "❌ **Заборона реклами:** Реклама без дозволу заборонена.\n"
+        "🤝 **Повага та етика:** Образи та токсичність неприпустимі.\n"
+        "🤬 **Без нецензурної лексики:** Дотримуємося ввічливого спілкування.\n"
+        "🛡️ **Без шахрайства:** Спроби скаму = бан."
     )
 
 # --- ЛОГІКА ВИДАЧІ FREE ТРИАЛУ ---
@@ -272,46 +278,83 @@ async def telegram_webhook(request: Request):
         if not update:
             return {"status": "ok"}
 
-        # 1. Текстові команди
-        if update.message and update.message.text:
-            text = update.message.text.strip()
+        # 1. Обробка повідомлень (текст, фото, документа)
+        if update.message:
             chat_id = update.message.chat_id
             user_id = update.message.from_user.id
-            username = update.message.from_user.username or "NoUsername"
+            username = update.message.from_user.username or "без_ніку"
 
-            if text in ["/start", "/services"]:
+            # Якщо це команда
+            if update.message.text:
+                text = update.message.text.strip()
+                if text in ["/start", "/services"]:
+                    await bot.send_message(chat_id=chat_id, text=get_text_start("ua"), reply_markup=get_main_keyboard("ua"), parse_mode="Markdown")
+                    return {"status": "ok"}
+                elif text == "/rules":
+                    await bot.send_message(chat_id=chat_id, text=get_text_rules("ua"), parse_mode="Markdown")
+                    return {"status": "ok"}
+                elif text == "/free_trial":
+                    response_text = await handle_free_trial_request(user_id, username)
+                    await bot.send_message(chat_id=chat_id, text=response_text, parse_mode="Markdown")
+                    return {"status": "ok"}
+                elif text == "/buy_group":
+                    await bot.send_message(chat_id=chat_id, text=get_payment_details_text(), reply_markup=get_payment_keyboard(), parse_mode="Markdown")
+                    return {"status": "ok"}
+
+            # Якщо користувач надіслав КВИТАНЦІЮ (фото, файл або текст):
+            if ADMIN_TELEGRAM_ID and user_id != ADMIN_TELEGRAM_ID:
+                admin_keyboard = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("✅ Підтвердити (1 міс)", callback_data=f"approve_{user_id}"),
+                        InlineKeyboardButton("❌ Відхилити", callback_data=f"decline_{user_id}")
+                    ]
+                ])
+
+                admin_text = f"📩 **НОВА КВИТАНЦІЯ ПРО ОПЛАТУ!**\n\n👤 **Користувач:** @{username}\n🆔 **ID:** `{user_id}`"
+
+                # Пересилаємо фото адміну
+                if update.message.photo:
+                    photo_file_id = update.message.photo[-1].file_id
+                    await bot.send_photo(
+                        chat_id=ADMIN_TELEGRAM_ID,
+                        photo=photo_file_id,
+                        caption=admin_text,
+                        reply_markup=admin_keyboard,
+                        parse_mode="Markdown"
+                    )
+                # Якщо файл (PDF тощо)
+                elif update.message.document:
+                    doc_file_id = update.message.document.file_id
+                    await bot.send_document(
+                        chat_id=ADMIN_TELEGRAM_ID,
+                        document=doc_file_id,
+                        caption=admin_text,
+                        reply_markup=admin_keyboard,
+                        parse_mode="Markdown"
+                    )
+                # Якщо просто текст (наприклад хеш транзакції)
+                elif update.message.text:
+                    admin_text += f"\n💬 **Повідомлення:**\n{update.message.text}"
+                    await bot.send_message(
+                        chat_id=ADMIN_TELEGRAM_ID,
+                        text=admin_text,
+                        reply_markup=admin_keyboard,
+                        parse_mode="Markdown"
+                    )
+
+                # Відповідаємо клієнту
                 await bot.send_message(
                     chat_id=chat_id,
-                    text=get_text_start("ua"),
-                    reply_markup=get_main_keyboard("ua"),
-                    parse_mode="Markdown"
-                )
-            elif text == "/rules":
-                await bot.send_message(chat_id=chat_id, text=get_text_rules("ua"), parse_mode="Markdown")
-            elif text == "/free_trial":
-                response_text = await handle_free_trial_request(user_id, username)
-                await bot.send_message(chat_id=chat_id, text=response_text, parse_mode="Markdown")
-            elif text == "/buy_group":
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text=get_payment_details_text(),
-                    reply_markup=get_payment_keyboard(),
-                    parse_mode="Markdown"
-                )
-            elif text == "/connect_bot":
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text="🤖 **Підключення Signal Bot ($100/міс)**\n\nДля налаштування автоматичного виконання сигналів через бота зверніться в підтримку.",
+                    text="✅ **Квитанцію отримано та передано адміністратору!**\n\nПісля перевірки ви отримаєте посилання для входу у VIP-групу. Зазвичай це займає трохи часу.",
                     parse_mode="Markdown"
                 )
 
-        # 2. Натискання на Inline-кнопки
+        # 2. Обробка натискання на Inline-кнопки
         elif update.callback_query:
             query = update.callback_query
             chat_id = query.message.chat_id
             message_id = query.message.message_id
             user_id = query.from_user.id
-            username = query.from_user.username or "NoUsername"
             data = query.data
 
             await bot.answer_callback_query(callback_query_id=query.id)
@@ -327,20 +370,69 @@ async def telegram_webhook(request: Request):
             elif data == "btn_rules":
                 await bot.send_message(chat_id=chat_id, text=get_text_rules("ua"), parse_mode="Markdown")
             elif data == "btn_free_trial":
+                username = query.from_user.username or "без_ніку"
                 response_text = await handle_free_trial_request(user_id, username)
                 await bot.send_message(chat_id=chat_id, text=response_text, parse_mode="Markdown")
             elif data == "btn_buy_group":
+                await bot.send_message(chat_id=chat_id, text=get_payment_details_text(), reply_markup=get_payment_keyboard(), parse_mode="Markdown")
+            elif data == "btn_connect_bot":
+                await bot.send_message(chat_id=chat_id, text="🤖 **Підключення Signal Bot ($100/міс)**\n\nДля налаштування персонального бота зверніться до адміністратора.", parse_mode="Markdown")
+
+            # --- АДМІН-ДІЇ: ПІДТВЕРДЖЕННЯ / ВІДХИЛЕННЯ ОПЛАТИ ---
+            elif data.startswith("approve_"):
+                target_user_id = int(data.split("_")[1])
+                now = datetime.now(timezone.utc)
+                sub_end = now + timedelta(days=30)
+
+                try:
+                    invite_link = await bot.create_chat_invite_link(
+                        chat_id=TELEGRAM_CHANNEL_ID,
+                        member_limit=1,
+                        expire_date=int((now + timedelta(hours=48)).timestamp())
+                    )
+
+                    async with aiosqlite.connect(DB_PATH) as db:
+                        await db.execute("""
+                            INSERT INTO users (user_id, status, sub_end)
+                            VALUES (?, 'active', ?)
+                            ON CONFLICT(user_id) DO UPDATE SET
+                                status = 'active',
+                                sub_end = ?
+                        """, (target_user_id, sub_end.isoformat(), sub_end.isoformat()))
+                        await db.commit()
+
+                    # Повідомляємо покупця
+                    await bot.send_message(
+                        chat_id=target_user_id,
+                        text=(
+                            f"🎉 **Вашу оплату підтверджено!**\n\n"
+                            f"Ласкаво просимо до VIP-групи! Ваша підписка активна на 30 днів (до {sub_end.strftime('%Y-%m-%d')}).\n\n"
+                            f"🔗 **Одноразове посилання для входу:**\n{invite_link.invite_link}"
+                        ),
+                        parse_mode="Markdown"
+                    )
+
+                    # Оновлюємо статус в адміна
+                    await bot.edit_message_caption(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        caption=f"{query.message.caption or query.message.text}\n\n✅ **ОПЛАТУ ПІДТВЕРДЖЕНО (Доступ надано)**"
+                    )
+                except Exception as e:
+                    logger.error(f"Error approving user {target_user_id}: {e}")
+                    await bot.send_message(chat_id=chat_id, text=f"❌ Помилка при схваленні: {e}")
+
+            elif data.startswith("decline_"):
+                target_user_id = int(data.split("_")[1])
                 await bot.send_message(
-                    chat_id=chat_id,
-                    text=get_payment_details_text(),
-                    reply_markup=get_payment_keyboard(),
+                    chat_id=target_user_id,
+                    text="❌ **На жаль, вашу квитанцію не було підтверджено.**\n\nЯкщо ви вважаєте, що це помилка, надішліть квитанцію повторно або уточніть деталі переказу.",
                     parse_mode="Markdown"
                 )
-            elif data == "btn_connect_bot":
-                await bot.send_message(
+                await bot.edit_message_caption(
                     chat_id=chat_id,
-                    text="🤖 **Підключення Signal Bot ($100/міс)**\n\nДля налаштування персонального бота зверніться до адміністратора.",
-                    parse_mode="Markdown"
+                    message_id=message_id,
+                    caption=f"{query.message.caption or query.message.text}\n\n❌ **ОПЛАТУ ВІДХИЛЕНО**"
                 )
 
         return {"status": "ok"}
