@@ -37,7 +37,7 @@ async def startup_event():
 
 # --- ДОПОМІЖНІ ФУНКЦІЇ ДЛЯ КНОПОК ТА МЕНЮ ---
 
-def get_main_keyboard(lang="en"):
+def get_main_keyboard(lang="ua"):
     """Генерує сітку Inline-кнопок"""
     if lang == "ua":
         keyboard = [
@@ -59,58 +59,81 @@ def get_main_keyboard(lang="en"):
         ]
     return InlineKeyboardMarkup(keyboard)
 
-def get_text_start(lang="en"):
+def get_text_start(lang="ua"):
+    """Повне розширене вітальне повідомлення"""
     if lang == "ua":
         return (
             "👋 **Вітаємо у спільноті!**\n\n"
             "Я — **Mireya**, твій персональний помічник із підключення та навігації. "
-            "Обери потрібну опцію з меню нижче:"
+            "Ознайомся з нашими послугами, бонусами та правилами нижче!\n\n"
+            "🎁 **Спеціальні пропозиції та Бонуси**\n"
+            "• 🚀 **14 днів FREE-доступу:** Кожен новий користувач отримує 2 тижні безкоштовного тестового доступу до VIP-групи!\n"
+            "• 👥 **Реферальна програма «Приведи друга»:** Ми — нова організація, яка активно розвивається. За кожного друга, який придбає підписку — отримуй **+14 днів безкоштовного доступу**!\n\n"
+            "💎 **Наші Послуги та Прайс**\n"
+            "• 📊 **VIP-група з сигналами:** **$20 / місяць** *(Аналітика ринку, торгові сигнали та чат спільноти)*\n"
+            "• 🤖 **Персональний Signal Bot:** **$100 / місяць** *(Автоматичне підключення бота для миттєвого виконання сигналів)*\n\n"
+            "📜 **Правила спільноти**\n"
+            "• 🚫 Без спаму, флуду, реклами та реферальних посилань.\n"
+            "• 🤝 Ввічливе спілкування, без мату, образ та токсичності.\n"
+            "• 🛡️ Шахрайство = негайний постійний бан.\n\n"
+            "👇 **Обери потрібну дію з меню нижче:**"
         )
     return (
         "👋 **Welcome to the community!**\n\n"
         "I am **Mireya**, your personal setup and navigation assistant. "
-        "Please choose an option from the menu below:"
+        "Please check out our services, bonuses, and community rules below!\n\n"
+        "🎁 **Special Offers & Bonuses**\n"
+        "• 🚀 **14-Day FREE Trial:** Every new user gets 2 weeks of free trial access to our VIP Signals Group!\n"
+        "• 👥 **\"Refer a Friend\" Program:** We are a growing project actively expanding. Bring a friend, and once they subscribe, get **+14 days of free VIP access**!\n\n"
+        "💎 **Services & Pricing**\n"
+        "• 📊 **VIP Signals Group Access:** **$20 / month** *(Market analytics, trade signals, and community access)*\n"
+        "• 🤖 **Personal Signal Bot Setup:** **$100 / month** *(Direct automated bot connection for instant signal execution)*\n\n"
+        "📜 **Community Rules**\n"
+        "• 🚫 No spam, flooding, self-promotion, or referral links.\n"
+        "• 🤝 Respectful communication, no profanity or toxicity.\n"
+        "• 🛡️ Fraudulent behavior results in an immediate permanent ban.\n\n"
+        "👇 **Choose an option from the menu below:**"
     )
 
-def get_text_services(lang="en"):
+def get_text_services(lang="ua"):
     if lang == "ua":
         return (
             "💎 **Наші Послуги та Прайс**\n\n"
             "📊 **VIP-група з сигналами:** **$20 / місяць**\n"
-            "*(Аналітика, торгові сигнали та доступ до чату спільноти)*\n\n"
+            "*(Аналітика, торгові сигнали та доступ до чату)*\n\n"
             "🤖 **Персональний Signal Bot:** **$100 / місяць**\n"
-            "*(Пряме автоматичне підключення бота для миттєвого виконання сигналів)*\n\n"
+            "*(Пряме автоматичне підключення бота для виконання сигналів)*\n\n"
             "🎁 **Бонуси:**\n"
             "• **14 днів FREE** для нових користувачів!\n"
-            "• **+14 днів** за кожного приведеного друга, який придбає підписку!"
+            "• **+14 днів** за кожного друга, який придбає підписку!"
         )
     return (
         "💎 **Services & Pricing**\n\n"
         "📊 **VIP Signals Group Access:** **$20 / month**\n"
-        "*(Market analytics, trade signals, and community access)*\n\n"
+        "*(Market analytics, trade signals, and community chat)*\n\n"
         "🤖 **Personal Signal Bot Setup:** **$100 / month**\n"
-        "*(Direct automated bot connection for instant signal execution)*\n\n"
+        "*(Direct automated bot connection for instant execution)*\n\n"
         "🎁 **Bonuses:**\n"
         "• **14-Day FREE Trial** for new users!\n"
         "• **+14 Days Free Access** for every referred friend who subscribes!"
     )
 
-def get_text_rules(lang="en"):
+def get_text_rules(lang="ua"):
     if lang == "ua":
         return (
             "📜 **Правила спільноти**\n\n"
-            "🚫 **Без спаму та флуду:** Заборонено смітити в чаті.\n"
-            "❌ **Заборона реклами:** Реклама та реферальні посилання заборонені.\n"
-            "🤝 **Повага:** Образи та токсичність неприпустимі.\n"
-            "🤬 **Без мату:** Дотримуємося ввічливого спілкування.\n"
-            "🛡️ **Без шахрайства:** Спроби скаму — негайний бан."
+            "🚫 **Без спаму та флуду:** За забороною масові розсилки та засмічення чату.\n"
+            "❌ **Заборона реклами:** Будь-який піар та реферальні посилання без дозволу заборонені.\n"
+            "🤝 **Повага та етика:** Образи, токсичність та провокації неприпустимі.\n"
+            "🤬 **Без нецензурної лексики:** Дотримуємося ввічливого спілкування.\n"
+            "🛡️ **Без шахрайства:** Спроби скаму призведуть до негайного бану."
         )
     return (
         "📜 **Community Rules**\n\n"
-        "🚫 **No Spam or Flooding:** Keep the chat clean.\n"
+        "🚫 **No Spam or Flooding:** Mass messaging and clutter are prohibited.\n"
         "❌ **No Advertising:** Self-promotion or referral links are forbidden.\n"
-        "🤝 **Respect & Courtesy:** Toxicity and insults will not be tolerated.\n"
-        "🤬 **No Profanity:** Keep the language clean and polite.\n"
+        "🤝 **Respect & Courtesy:** Insults, toxicity, and provocation will not be tolerated.\n"
+        "🤬 **No Profanity:** Keep communication polite and clean.\n"
         "🛡️ **No Scams:** Fraudulent behavior leads to an immediate permanent ban."
     )
 
@@ -126,7 +149,7 @@ async def telegram_webhook(request: Request):
         if not update:
             return {"status": "ok"}
 
-        # 1. Обробка звичайних текстових команд (/start, /rules, /services)
+        # 1. Обробка текстових команд (/start, /rules, /services тощо)
         if update.message and update.message.text:
             text = update.message.text.strip()
             chat_id = update.message.chat_id
@@ -134,32 +157,32 @@ async def telegram_webhook(request: Request):
             if text in ["/start", "/services"]:
                 await bot.send_message(
                     chat_id=chat_id,
-                    text=get_text_start("en"),
-                    reply_markup=get_main_keyboard("en"),
+                    text=get_text_start("ua"),
+                    reply_markup=get_main_keyboard("ua"),
                     parse_mode="Markdown"
                 )
             elif text == "/rules":
                 await bot.send_message(
                     chat_id=chat_id,
-                    text=get_text_rules("en"),
+                    text=get_text_rules("ua"),
                     parse_mode="Markdown"
                 )
             elif text == "/free_trial":
                 await bot.send_message(
                     chat_id=chat_id,
-                    text="🎁 **14-Day Free Trial Activated!**\n\nContact the admin to receive your access link.",
+                    text="🎁 **14 днів безкоштовного доступу активовано!**\n\nНапишіть адміністратору, щоб отримати посилання для входу в групу.",
                     parse_mode="Markdown"
                 )
             elif text == "/buy_group":
                 await bot.send_message(
                     chat_id=chat_id,
-                    text="📊 **VIP Signals Group ($20/mo)**\n\nPlease contact our support/admin to proceed with payment.",
+                    text="📊 **Доступ до VIP-групи з сигналами ($20/міс)**\n\nНапишіть адміністратору для отримання реквізитів на оплату.",
                     parse_mode="Markdown"
                 )
             elif text == "/connect_bot":
                 await bot.send_message(
                     chat_id=chat_id,
-                    text="🤖 **Signal Bot Connection ($100/mo)**\n\nPlease fill out this short form or contact admin to setup your bot connection.",
+                    text="🤖 **Підключення Signal Bot ($100/міс)**\n\nБудь ласка, натисніть відповідну кнопку або заповніть коротку анкету для налаштування бота.",
                     parse_mode="Markdown"
                 )
 
@@ -189,15 +212,15 @@ async def telegram_webhook(request: Request):
                     parse_mode="Markdown"
                 )
             elif data == "btn_services":
-                await bot.send_message(chat_id=chat_id, text=get_text_services("en"), parse_mode="Markdown")
+                await bot.send_message(chat_id=chat_id, text=get_text_services("ua"), parse_mode="Markdown")
             elif data == "btn_rules":
-                await bot.send_message(chat_id=chat_id, text=get_text_rules("en"), parse_mode="Markdown")
+                await bot.send_message(chat_id=chat_id, text=get_text_rules("ua"), parse_mode="Markdown")
             elif data == "btn_free_trial":
-                await bot.send_message(chat_id=chat_id, text="🎁 **14-Day Free Trial!** Contact admin to get your personal invite link.", parse_mode="Markdown")
+                await bot.send_message(chat_id=chat_id, text="🎁 **14 днів безкоштовного доступу!** Напишіть адміну для отримання доступу.", parse_mode="Markdown")
             elif data == "btn_buy_group":
-                await bot.send_message(chat_id=chat_id, text="📊 **VIP Signals Group Access ($20/mo)**\n\nContact admin to pay and get instant access.", parse_mode="Markdown")
+                await bot.send_message(chat_id=chat_id, text="📊 **VIP-група з сигналами ($20/міс)**\n\nЗв'яжіться з адміном для здійснення оплати.", parse_mode="Markdown")
             elif data == "btn_connect_bot":
-                await bot.send_message(chat_id=chat_id, text="🤖 **Signal Bot Setup ($100/mo)**\n\nPlease send your exchange API details or write to admin to setup.", parse_mode="Markdown")
+                await bot.send_message(chat_id=chat_id, text="🤖 **Підключення Signal Bot ($100/міс)**\n\nБудь ласка, заповніть анкету або напишіть адміну для інтеграції.", parse_mode="Markdown")
 
         return {"status": "ok"}
     except Exception as e:
