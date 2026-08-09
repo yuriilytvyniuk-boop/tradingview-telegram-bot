@@ -15,7 +15,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")  # ID VIP-групи
 ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))  # ID адміна
 
-# 🔗 Посилання на загальну групу спілкування (замініть на ваше дійсне посилання)
+# 🔗 Посилання на загальну групу спілкування
 PUBLIC_CHAT_LINK = os.getenv("PUBLIC_CHAT_LINK", "https://t.me/kerdos_group")
 
 DB_PATH = "trades.db"
@@ -136,9 +136,9 @@ async def check_expired_trials():
 
                         user_lang = lang or "ua"
                         text = (
-                            "⏳ **Термін вашої підписки на VIP-групу закінчився.**\n\nДля продовження підписки скористайтеся меню бота."
+                            "⏳ **Термін вашої підписки на VIP-групу Kerdos закінчився.**\n\nДля продовження підписки скористайтеся меню бота."
                             if user_lang == "ua" else
-                            "⏳ **Your VIP group subscription has expired.**\n\nPlease use the menu to renew your access."
+                            "⏳ **Your Kerdos VIP group subscription has expired.**\n\nPlease use the menu to renew your access."
                         )
 
                         await bot.send_message(
@@ -192,13 +192,13 @@ def get_back_keyboard(lang="ua"):
 def get_text_start(lang="ua"):
     if lang == "ua":
         return (
-            "👋 **Вітаємо у спільноті!**\n\n"
-            "Я — персональний помічник аналітичної системи **Kerdos**.\n\n"
+            "👋 **Вітаємо у спільноті Kerdos!**\n\n"
+            "Я — **Mireya**, ваш персональний помічник аналітичної торгової системи **Kerdos**.\n\n"
             "🎁 **Спеціальні пропозиції та Бонуси:**\n"
-            "• 🚀 **14 днів FREE-доступу:** Кожен новий користувач отримує 2 тижні безкоштовного тестового доступу до VIP-групи!\n"
+            "• 🚀 **14 днів FREE-доступу:** Кожен новий користувач отримує 2 тижні безкоштовного тестового доступу до VIP-групи Kerdos!\n"
             "• 👥 **Реферальна програма «Приведи друга»:** За кожного друга, який придбає підписку — отримуй **+14 днів безкоштовного доступу**!\n\n"
             "💎 **Наші Послуги та Прайс:**\n"
-            "• 📊 **VIP-група з сигналами:** **$20 / місяць** *(Аналітика ринку, торгові сигнали та чат спільноти)*\n"
+            "• 📊 **VIP-група з сигналами Kerdos:** **$20 / місяць** *(Аналітика ринку, торгові сигнали та чат спільноти)*\n"
             "• 🤖 **Персональний Signal Bot:** **$100 / місяць** *(Автоматичне підключення вашого акаунту OKX для миттєвої торгівлі)*\n\n"
             "📜 **Правила спільноти:**\n"
             "• 🚫 Без спаму, флуду, реклами та реферальних посилань.\n"
@@ -207,13 +207,13 @@ def get_text_start(lang="ua"):
             "👇 **Обери потрібну дію з меню нижче:**"
         )
     return (
-        "👋 **Welcome to the community!**\n\n"
-        "I am your personal assistant for the **Kerdos** trading system.\n\n"
+        "👋 **Welcome to the Kerdos community!**\n\n"
+        "I am **Mireya**, your personal assistant for the **Kerdos** trading system.\n\n"
         "🎁 **Special Offers & Bonuses:**\n"
-        "• 🚀 **14-Day FREE Trial:** Every new user gets 2 weeks of free trial access to our VIP Signals Group!\n"
+        "• 🚀 **14-Day FREE Trial:** Every new user gets 2 weeks of free trial access to our Kerdos VIP Signals Group!\n"
         "• 👥 **\"Refer a Friend\" Program:** Bring a friend, and once they subscribe, get **+14 days of free VIP access**!\n\n"
         "💎 **Services & Pricing:**\n"
-        "• 📊 **VIP Signals Group Access:** **$20 / month** *(Market analytics, trade signals, and community access)*\n"
+        "• 📊 **Kerdos VIP Signals Group:** **$20 / month** *(Market analytics, trade signals, and community access)*\n"
         "• 🤖 **Personal Signal Bot Setup:** **$100 / month** *(Direct OKX bot connection for automated signal execution)*\n\n"
         "📜 **Community Rules:**\n"
         "• 🚫 No spam, flooding, self-promotion, or referral links.\n"
@@ -225,7 +225,7 @@ def get_text_start(lang="ua"):
 def get_text_vip_payment(lang="ua"):
     if lang == "ua":
         return (
-            "💳 **Оплата підписки на VIP-групу ($20 / місяць)**\n\n"
+            "💳 **Оплата підписки на VIP-групу Kerdos ($20 / місяць)**\n\n"
             "Для активації підписки перекажіть **20 USDT** на один із гаманців Binance нижче:\n\n"
             f"🔸 **USDT (TRC20):**\n`{WALLET_USDT_TRC20}`\n\n"
             f"🔹 **USDT (BEP20 / BNB Chain):**\n`{WALLET_USDT_BEP20}`\n\n"
@@ -233,10 +233,10 @@ def get_text_vip_payment(lang="ua"):
             "*(Натисніть на адресу, щоб її скопіювати)*\n\n"
             "📥 **ПІДТВЕРДЖЕННЯ ОПЛАТИ:**\n"
             "Після виконання переказу **надішліть квитанцію (фото, скріншот або текст з хешем транзакції) сюди в чат**.\n\n"
-            "Адміністратор перевірить переказ і доступ буде надано протягом дня!"
+            "Я (Mireya) передам її адміністратору на перевірку, і доступ буде надано!"
         )
     return (
-        "💳 **VIP Group Subscription ($20 / month)**\n\n"
+        "💳 **Kerdos VIP Group Subscription ($20 / month)**\n\n"
         "To activate your subscription, send **20 USDT** to one of the Binance wallets below:\n\n"
         f"🔸 **USDT (TRC20):**\n`{WALLET_USDT_TRC20}`\n\n"
         f"🔹 **USDT (BEP20 / BNB Chain):**\n`{WALLET_USDT_BEP20}`\n\n"
@@ -244,13 +244,13 @@ def get_text_vip_payment(lang="ua"):
         "*(Tap the address to copy it)*\n\n"
         "📥 **HOW TO CONFIRM PAYMENT:**\n"
         "After completing the transfer, **send the receipt (photo, screenshot, or transaction TxID) directly into this chat**.\n\n"
-        "The admin will verify the transfer and grant access within 24 hours!"
+        "I (Mireya) will forward it to the admin for verification!"
     )
 
 def get_text_bot_payment(lang="ua"):
     if lang == "ua":
         return (
-            "🤖 **Підключення Signal Bot ($100 / місяць)**\n\n"
+            "🤖 **Підключення Kerdos Signal Bot ($100 / місяць)**\n\n"
             "Персональний бот для автоматичного виконання сигналів **Kerdos** на вашому акаунті OKX.\n\n"
             "⚡ **Переваги:**\n"
             "• Автоматичне відкриття/закриття угод 24/7\n"
@@ -265,7 +265,7 @@ def get_text_bot_payment(lang="ua"):
             "Після переказу **надішліть квитанцію (скріншот або хеш) сюди в чат**."
         )
     return (
-        "🤖 **Connect Signal Bot ($100 / month)**\n\n"
+        "🤖 **Connect Kerdos Signal Bot ($100 / month)**\n\n"
         "Automated bot for executing **Kerdos** signals directly on your OKX account.\n\n"
         "⚡ **Benefits:**\n"
         "• 24/7 automated trade execution\n"
@@ -283,7 +283,7 @@ def get_text_bot_payment(lang="ua"):
 def get_text_services(lang="ua"):
     if lang == "ua":
         return (
-            "💎 **Наші Послуги та Прайс**\n\n"
+            "💎 **Наші Послуги та Прайс (Kerdos)**\n\n"
             "📊 **VIP-група з сигналами:** **$20 / місяць**\n\n"
             "🤖 **Персональний Signal Bot:** **$100 / місяць**\n\n"
             "🎁 **Бонуси:**\n"
@@ -291,7 +291,7 @@ def get_text_services(lang="ua"):
             "• **+14 днів** за кожного друга, який придбає підписку!"
         )
     return (
-        "💎 **Services & Pricing**\n\n"
+        "💎 **Services & Pricing (Kerdos)**\n\n"
         "📊 **VIP Signals Group Access:** **$20 / month**\n\n"
         "🤖 **Personal Signal Bot Setup:** **$100 / month**\n\n"
         "🎁 **Bonuses:**\n"
@@ -302,7 +302,7 @@ def get_text_services(lang="ua"):
 def get_text_rules(lang="ua"):
     if lang == "ua":
         return (
-            "📜 **Правила спільноти**\n\n"
+            "📜 **Правила спільноти Kerdos**\n\n"
             "🚫 **Без спаму та флуду:** Масові розсилки заборонені.\n"
             "❌ **Заборона реклами:** Реклама без дозволу заборонена.\n"
             "🤝 **Повага та етика:** Образи та токсичність неприпустимі.\n"
@@ -310,7 +310,7 @@ def get_text_rules(lang="ua"):
             "🛡️ **Без шахрайства:** Спроби скаму = бан."
         )
     return (
-        "📜 **Community Rules**\n\n"
+        "📜 **Kerdos Community Rules**\n\n"
         "🚫 **No Spam or Flooding:** Mass messaging is prohibited.\n"
         "❌ **No Advertising:** Self-promotion is forbidden.\n"
         "🤝 **Respect & Courtesy:** Toxicity will not be tolerated.\n"
@@ -321,18 +321,18 @@ def get_text_rules(lang="ua"):
 def get_text_okx_instruction(lang="ua"):
     if lang == "ua":
         return (
-            "🎉 **Оплату Signal Bot підтверджено!**\n\n"
+            "🎉 **Оплату Kerdos Signal Bot підтверджено!**\n\n"
             "Для підключення вашого акаунту OKX до системи сигналів **Kerdos**, будь ласка, надайте ваш **Signal Token**.\n\n"
             "📍 **Де знайти Signal Token на OKX:**\n"
             "1. Зайдіть на біржу **OKX** ➔ розділ **Торгувати (Trade)** ➔ **Торгові боти (Trading Bots)**.\n"
             "2. Оберіть **Сигнальний бот (Signal Bot)** ➔ **Створити власні сигнали (Create Custom Signal)**.\n"
             "3. Введіть назву сигналу (наприклад, `Kerdos Signals`) та натисніть **Створити**.\n"
             "4. Скопіюйте рядок **Signal Token** з налаштувань бота.\n\n"
-            "📥 **Надішліть ваш токен у цей чат у такому формате:**\n"
+            "📥 **Надішліть ваш токен у цей чат у такому форматі:**\n"
             "`Token: ваш_signal_token_тут`"
         )
     return (
-        "🎉 **Signal Bot payment approved!**\n\n"
+        "🎉 **Kerdos Signal Bot payment approved!**\n\n"
         "To connect your OKX account to the **Kerdos** signal system, please provide your **Signal Token**.\n\n"
         "📍 **Where to find Signal Token on OKX:**\n"
         "1. Go to **OKX** ➔ **Trade** ➔ **Trading Bots**.\n"
@@ -378,18 +378,18 @@ async def handle_free_trial_request(user_id: int, username: str, lang: str = "ua
 
             if lang == "ua":
                 return (
-                    f"🎉 **Вам надано 14 днів безкоштовного доступу!**\n\n"
+                    f"🎉 **Вам надано 14 днів безкоштовного доступу до Kerdos VIP!**\n\n"
                     f"🔗 **Ваше одноразове посилання:**\n{invite_link.invite_link}\n\n"
                     f"⏰ Доступ активний до: **{trial_end.strftime('%Y-%m-%d %H:%M UTC')}**"
                 )
             return (
-                f"🎉 **You have been granted 14 days of free access!**\n\n"
+                f"🎉 **You have been granted 14 days of free access to Kerdos VIP!**\n\n"
                 f"🔗 **Your invite link:**\n{invite_link.invite_link}\n\n"
                 f"⏰ Access valid until: **{trial_end.strftime('%Y-%m-%d %H:%M UTC')}**"
             )
         except Exception as e:
             logger.error(f"Error creating invite link for user {user_id}: {e}")
-            return "❌ Помилка при створенні посилання. Переконайся, що бот доданий у групу як адмін."
+            return "❌ Помилка при створенні посилання. Переконайся, що Mireya додана у групу як адмін."
 
 # --- ВЕБХУК TELEGRAM ---
 
@@ -515,10 +515,10 @@ async def telegram_webhook(request: Request):
                     await db.commit()
 
                 approval_msg = (
-                    f"🎉 **Вашу оплату VIP-групи підтверджено!**\n\n"
+                    f"🎉 **Вашу оплату VIP-групи Kerdos підтверджено!**\n\n"
                     f"🔗 **Посилання для входу:**\n{invite_link.invite_link}"
                     if target_lang == "ua" else
-                    f"🎉 **Your VIP subscription has been approved!**\n\n"
+                    f"🎉 **Your Kerdos VIP subscription has been approved!**\n\n"
                     f"🔗 **Your invite link:**\n{invite_link.invite_link}"
                 )
                 await bot.send_message(chat_id=target_user_id, text=approval_msg, parse_mode="Markdown")
