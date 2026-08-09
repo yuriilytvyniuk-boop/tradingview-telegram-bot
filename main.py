@@ -1,7 +1,8 @@
 import os
 import json
 import logging
-from datetime import datetime, timezone
+import asyncio
+from datetime import datetime, timezone, timedelta
 from fastapi import FastAPI, Request
 import telegram
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -11,14 +12,17 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
+TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")  # ID вашої VIP-групи (наприклад -1001234567890)
 DB_PATH = "trades.db"
 
 app = FastAPI()
 bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN) if TELEGRAM_BOT_TOKEN else None
 
+# --- БАЗА ДАНИХ ---
+
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
+        # Таблиця трейдів
         await db.execute("""
             CREATE TABLE IF NOT EXISTS trades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29,16 +33,82 @@ async def init_db():
                 timestamp DATETIME
             )
         """)
+        # Таблиця користувачів для підписок та пробних періодів
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                trial_used INTEGER DEFAULT 0,
+                trial_start DATETIME,
+                trial_end DATETIME,
+                status TEXT DEFAULT 'free'
+            )
+        """)
         await db.commit()
+
+# --- ФОНОВИЙ ТАЙМЕР ДЛЯ ВИДАЛЕННЯ ПІСЛЯ 14 ДНІВ ---
+
+async def check_expired_trials():
+    """Фонова задача: щодня перевіряє, у кого закінчилися 14 днів, видаляє з каналу та надсилає пропозицію"""
+    while True:
+        try:
+            await asyncio.sleep(3600)  # Перевірка кожну годину
+            now = datetime.now(timezone.utc)
+            
+            async with aiosqlite.connect(DB_PATH) as db:
+                async with db.execute(
+                    "SELECT user_id, username FROM users WHERE status = 'trial' AND trial_end <= ?",
+                    (now.isoformat(),)
+                ) as cursor:
+                    expired_users = await cursor.fetchall()
+
+                for user_id, username in expired_users:
+                    try:
+                        # Видаляємо з каналу (ban + unban залишає можливість зайти за новою підпискою)
+                        await bot.ban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
+                        await bot.unban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
+                        
+                        # Оновлюємо статус у базі
+                        await db.execute(
+                            "UPDATE users SET status = 'expired' WHERE user_id = ?",
+                            (user_id,)
+                        )
+                        await db.commit()
+
+                        # Клавіатура з 2 кнопками продовження
+                        expired_keyboard = InlineKeyboardMarkup([
+                            [InlineKeyboardButton("📊 Оформити VIP ($20/міс)", callback_data="btn_buy_group")],
+                            [InlineKeyboardButton("🤖 Підключити Signal Bot ($100/міс)", callback_data="btn_connect_bot")]
+                        ])
+
+                        # Повідомлення користувачу
+                        await bot.send_message(
+                            chat_id=user_id,
+                            text=(
+                                "⏳ **Ваш 14-денний тестовий період завершився!**\n\n"
+                                "Сподіваємося, ви оцінили точність та якість сигналів **Mireya**! 🚀\n\n"
+                                "Щоб не втрачати прибуткові угоди та продовжити отримувати сигнали в реальному часі, "
+                                "оберіть один із варіантів продовження підписки нижче:"
+                            ),
+                            reply_markup=expired_keyboard,
+                            parse_mode="Markdown"
+                        )
+                        logger.info(f"User {user_id} ({username}) removed after trial expiration.")
+                    except Exception as e:
+                        logger.error(f"Failed to remove expired user {user_id}: {e}")
+
+        except Exception as e:
+            logger.error(f"Error in check_expired_trials loop: {e}")
 
 @app.on_event("startup")
 async def startup_event():
     await init_db()
+    # Запускаємо перевірку протермінованих підписок у фоновому режимі
+    asyncio.create_task(check_expired_trials())
 
 # --- ДОПОМІЖНІ ФУНКЦІЇ ДЛЯ КНОПОК ТА МЕНЮ ---
 
 def get_main_keyboard(lang="ua"):
-    """Генерує сітку Inline-кнопок"""
     if lang == "ua":
         keyboard = [
             [InlineKeyboardButton("🎁 Отримати 14 днів FREE", callback_data="btn_free_trial")],
@@ -60,7 +130,6 @@ def get_main_keyboard(lang="ua"):
     return InlineKeyboardMarkup(keyboard)
 
 def get_text_start(lang="ua"):
-    """Повне розширене вітальне повідомлення"""
     if lang == "ua":
         return (
             "👋 **Вітаємо у спільноті!**\n\n"
@@ -68,14 +137,14 @@ def get_text_start(lang="ua"):
             "Ознайомся з нашими послугами, бонусами та правилами нижче!\n\n"
             "🎁 **Спеціальні пропозиції та Бонуси**\n"
             "• 🚀 **14 днів FREE-доступу:** Кожен новий користувач отримує 2 тижні безкоштовного тестового доступу до VIP-групи!\n"
-            "• 👥 **Реферальна програма «Приведи друга»:** Ми — нова організація, яка активно розвивається. За кожного друга, який придбає підписку — отримуй **+14 днів безкоштовного доступу**!\n\n"
+            "• 👥 **Реферальна програма «Приведи друга»:** За кожного друга, який придбає підписку — отримуй **+14 днів безкоштовного доступу**!\n\n"
             "💎 **Наші Послуги та Прайс**\n"
             "• 📊 **VIP-група з сигналами:** **$20 / місяць** *(Аналітика ринку, торгові сигнали та чат спільноти)*\n"
             "• 🤖 **Персональний Signal Bot:** **$100 / місяць** *(Автоматичне підключення бота для миттєвого виконання сигналів)*\n\n"
             "📜 **Правила спільноти**\n"
             "• 🚫 Без спаму, флуду, реклами та реферальних посилань.\n"
-            "• 🤝 Ввічливе спілкування, без мату, образ та токсичності.\n"
-            "• 🛡️ Шахрайство = негайний постійний бан.\n\n"
+            "• 🤝 Ввічливе спілкування, без мату та токсичності.\n"
+            "• 🛡️ Шахрайство = негайний бан.\n\n"
             "👇 **Обери потрібну дію з меню нижче:**"
         )
     return (
@@ -84,7 +153,7 @@ def get_text_start(lang="ua"):
         "Please check out our services, bonuses, and community rules below!\n\n"
         "🎁 **Special Offers & Bonuses**\n"
         "• 🚀 **14-Day FREE Trial:** Every new user gets 2 weeks of free trial access to our VIP Signals Group!\n"
-        "• 👥 **\"Refer a Friend\" Program:** We are a growing project actively expanding. Bring a friend, and once they subscribe, get **+14 days of free VIP access**!\n\n"
+        "• 👥 **\"Refer a Friend\" Program:** Bring a friend, and once they subscribe, get **+14 days of free VIP access**!\n\n"
         "💎 **Services & Pricing**\n"
         "• 📊 **VIP Signals Group Access:** **$20 / month** *(Market analytics, trade signals, and community access)*\n"
         "• 🤖 **Personal Signal Bot Setup:** **$100 / month** *(Direct automated bot connection for instant signal execution)*\n\n"
@@ -99,20 +168,16 @@ def get_text_services(lang="ua"):
     if lang == "ua":
         return (
             "💎 **Наші Послуги та Прайс**\n\n"
-            "📊 **VIP-група з сигналами:** **$20 / місяць**\n"
-            "*(Аналітика, торгові сигнали та доступ до чату)*\n\n"
-            "🤖 **Персональний Signal Bot:** **$100 / місяць**\n"
-            "*(Пряме автоматичне підключення бота для виконання сигналів)*\n\n"
+            "📊 **VIP-група з сигналами:** **$20 / місяць**\n\n"
+            "🤖 **Персональний Signal Bot:** **$100 / місяць**\n\n"
             "🎁 **Бонуси:**\n"
             "• **14 днів FREE** для нових користувачів!\n"
             "• **+14 днів** за кожного друга, який придбає підписку!"
         )
     return (
         "💎 **Services & Pricing**\n\n"
-        "📊 **VIP Signals Group Access:** **$20 / month**\n"
-        "*(Market analytics, trade signals, and community chat)*\n\n"
-        "🤖 **Personal Signal Bot Setup:** **$100 / month**\n"
-        "*(Direct automated bot connection for instant execution)*\n\n"
+        "📊 **VIP Signals Group Access:** **$20 / month**\n\n"
+        "🤖 **Personal Signal Bot Setup:** **$100 / month**\n\n"
         "🎁 **Bonuses:**\n"
         "• **14-Day FREE Trial** for new users!\n"
         "• **+14 Days Free Access** for every referred friend who subscribes!"
@@ -122,26 +187,69 @@ def get_text_rules(lang="ua"):
     if lang == "ua":
         return (
             "📜 **Правила спільноти**\n\n"
-            "🚫 **Без спаму та флуду:** За забороною масові розсилки та засмічення чату.\n"
-            "❌ **Заборона реклами:** Будь-який піар та реферальні посилання без дозволу заборонені.\n"
-            "🤝 **Повага та етика:** Образи, токсичність та провокації неприпустимі.\n"
+            "🚫 **Без спаму та флуду:** Масові розсилки заборонені.\n"
+            "❌ **Заборона реклами:** Реклама без дозволу заборонена.\n"
+            "🤝 **Повага та етика:** Образи та токсичність неприпустимі.\n"
             "🤬 **Без нецензурної лексики:** Дотримуємося ввічливого спілкування.\n"
-            "🛡️ **Без шахрайства:** Спроби скаму призведуть до негайного бану."
+            "🛡️ **Без шахрайства:** Спроби скаму = бан."
         )
     return (
         "📜 **Community Rules**\n\n"
-        "🚫 **No Spam or Flooding:** Mass messaging and clutter are prohibited.\n"
-        "❌ **No Advertising:** Self-promotion or referral links are forbidden.\n"
-        "🤝 **Respect & Courtesy:** Insults, toxicity, and provocation will not be tolerated.\n"
+        "🚫 **No Spam or Flooding:** Mass messaging is prohibited.\n"
+        "❌ **No Advertising:** Self-promotion is forbidden.\n"
+        "🤝 **Respect & Courtesy:** Toxicity will not be tolerated.\n"
         "🤬 **No Profanity:** Keep communication polite and clean.\n"
-        "🛡️ **No Scams:** Fraudulent behavior leads to an immediate permanent ban."
+        "🛡️ **No Scams:** Immediate permanent ban."
     )
 
-# --- ОБРОБНИК ВЕБХУКУ ВІД TELEGRAM (Команди та Кнопки) ---
+# --- ЛОГІКА ВИДАЧІ FREE ТРИАЛУ (14 ДНІВ) ---
+
+async def handle_free_trial_request(user_id: int, username: str):
+    """Перевіряє базу даних та видає одноразове посилання на 14 днів"""
+    now = datetime.now(timezone.utc)
+    trial_end = now + timedelta(days=14)
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT trial_used, status FROM users WHERE user_id = ?", (user_id,)) as cursor:
+            user = await cursor.fetchone()
+
+        if user and user[0] == 1:
+            return "⚠️ **Ви вже використовували безкоштовний 14-денний період.**\n\nЯкщо бажаєте продовжити доступ, ви можете оформити підписку ($20/міс) у головному меню."
+
+        try:
+            # Генеруємо одноразове посилання в групу (дійсне 1 використання)
+            invite_link = await bot.create_chat_invite_link(
+                chat_id=TELEGRAM_CHANNEL_ID,
+                member_limit=1,
+                expire_date=int((now + timedelta(hours=24)).timestamp()) # Посилання активне 24 години
+            )
+            
+            # Записуємо користувача в базу
+            await db.execute("""
+                INSERT INTO users (user_id, username, trial_used, trial_start, trial_end, status)
+                VALUES (?, ?, 1, ?, ?, 'trial')
+                ON CONFLICT(user_id) DO UPDATE SET
+                    trial_used = 1,
+                    trial_start = excluded.trial_start,
+                    trial_end = excluded.trial_end,
+                    status = 'trial'
+            """, (user_id, username, now.isoformat(), trial_end.isoformat()))
+            await db.commit()
+
+            return (
+                f"🎉 **Вам надано 14 днів безкоштовного доступу!**\n\n"
+                f"🔗 **Ваше одноразове посилання для входу:**\n{invite_link.invite_link}\n\n"
+                f"⏰ Доступ буде активний до: **{trial_end.strftime('%Y-%m-%d %H:%M UTC')}**\n"
+                f"*(Посилання дійсне 24 години, використайте його зараз)*"
+            )
+        except Exception as e:
+            logger.error(f"Error creating invite link for user {user_id}: {e}")
+            return "❌ **Помилка при створенні посилання.** Переконайтеся, що бот доданий у групу як адміністратор."
+
+# --- ОБРОБНИК ВЕБХУКУ ВІД TELEGRAM ---
 
 @app.post("/telegram_webhook")
 async def telegram_webhook(request: Request):
-    """Обробляє команди від користувачів у Telegram (/start, натискання кнопок)"""
     try:
         data = await request.json()
         update = Update.de_json(data, bot)
@@ -149,10 +257,12 @@ async def telegram_webhook(request: Request):
         if not update:
             return {"status": "ok"}
 
-        # 1. Обробка текстових команд (/start, /rules, /services тощо)
+        # 1. Текстові команди
         if update.message and update.message.text:
             text = update.message.text.strip()
             chat_id = update.message.chat_id
+            user_id = update.message.from_user.id
+            username = update.message.from_user.username or "NoUsername"
 
             if text in ["/start", "/services"]:
                 await bot.send_message(
@@ -162,65 +272,41 @@ async def telegram_webhook(request: Request):
                     parse_mode="Markdown"
                 )
             elif text == "/rules":
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text=get_text_rules("ua"),
-                    parse_mode="Markdown"
-                )
+                await bot.send_message(chat_id=chat_id, text=get_text_rules("ua"), parse_mode="Markdown")
             elif text == "/free_trial":
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text="🎁 **14 днів безкоштовного доступу активовано!**\n\nНапишіть адміністратору, щоб отримати посилання для входу в групу.",
-                    parse_mode="Markdown"
-                )
+                response_text = await handle_free_trial_request(user_id, username)
+                await bot.send_message(chat_id=chat_id, text=response_text, parse_mode="Markdown")
             elif text == "/buy_group":
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text="📊 **Доступ до VIP-групи з сигналами ($20/міс)**\n\nНапишіть адміністратору для отримання реквізитів на оплату.",
-                    parse_mode="Markdown"
-                )
+                await bot.send_message(chat_id=chat_id, text="📊 **Доступ до VIP-групи ($20/міс)**\n\nНапишіть адміністратору для отримання реквізитів.", parse_mode="Markdown")
             elif text == "/connect_bot":
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text="🤖 **Підключення Signal Bot ($100/міс)**\n\nБудь ласка, натисніть відповідну кнопку або заповніть коротку анкету для налаштування бота.",
-                    parse_mode="Markdown"
-                )
+                await bot.send_message(chat_id=chat_id, text="🤖 **Підключення Signal Bot ($100/міс)**\n\nБудь ласка, заповніть анкету або напишіть адміну.", parse_mode="Markdown")
 
-        # 2. Обробка натискань на Inline-кнопки (Callback Query)
+        # 2. Натискання на Inline-кнопки
         elif update.callback_query:
             query = update.callback_query
             chat_id = query.message.chat_id
             message_id = query.message.message_id
+            user_id = query.from_user.id
+            username = query.from_user.username or "NoUsername"
             data = query.data
 
             await bot.answer_callback_query(callback_query_id=query.id)
 
             if data == "lang_ua":
-                await bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text=get_text_start("ua"),
-                    reply_markup=get_main_keyboard("ua"),
-                    parse_mode="Markdown"
-                )
+                await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=get_text_start("ua"), reply_markup=get_main_keyboard("ua"), parse_mode="Markdown")
             elif data == "lang_en":
-                await bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text=get_text_start("en"),
-                    reply_markup=get_main_keyboard("en"),
-                    parse_mode="Markdown"
-                )
+                await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=get_text_start("en"), reply_markup=get_main_keyboard("en"), parse_mode="Markdown")
             elif data == "btn_services":
                 await bot.send_message(chat_id=chat_id, text=get_text_services("ua"), parse_mode="Markdown")
             elif data == "btn_rules":
                 await bot.send_message(chat_id=chat_id, text=get_text_rules("ua"), parse_mode="Markdown")
             elif data == "btn_free_trial":
-                await bot.send_message(chat_id=chat_id, text="🎁 **14 днів безкоштовного доступу!** Напишіть адміну для отримання доступу.", parse_mode="Markdown")
+                response_text = await handle_free_trial_request(user_id, username)
+                await bot.send_message(chat_id=chat_id, text=response_text, parse_mode="Markdown")
             elif data == "btn_buy_group":
-                await bot.send_message(chat_id=chat_id, text="📊 **VIP-група з сигналами ($20/міс)**\n\nЗв'яжіться з адміном для здійснення оплати.", parse_mode="Markdown")
+                await bot.send_message(chat_id=chat_id, text="📊 **VIP-група ($20/міс)**\n\nЗв'яжіться з адміном для здійснення оплати.", parse_mode="Markdown")
             elif data == "btn_connect_bot":
-                await bot.send_message(chat_id=chat_id, text="🤖 **Підключення Signal Bot ($100/міс)**\n\nБудь ласка, заповніть анкету або напишіть адміну для інтеграції.", parse_mode="Markdown")
+                await bot.send_message(chat_id=chat_id, text="🤖 **Підключення Signal Bot ($100/міс)**\n\nБудь ласка, заповніть анкету для налаштування.", parse_mode="Markdown")
 
         return {"status": "ok"}
     except Exception as e:
