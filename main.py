@@ -7,14 +7,14 @@ from fastapi import FastAPI, Request
 import telegram
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 import aiosqlite
-import httpx  # Для відправки сигналів на OKX
+import httpx
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- ЗМІННІ ОТОЧЕННЯ ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")  # ID VIP-групи
+TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")  # ID VIP-групи або каналу
 ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))  # ID адміна
 
 # 🔗 Посилання на загальну групу спілкування
@@ -59,7 +59,8 @@ async def init_db():
                 signal_token TEXT,
                 status TEXT DEFAULT 'free',
                 lang TEXT DEFAULT 'ua',
-                referrer_id INTEGER DEFAULT NULL
+                referrer_id INTEGER DEFAULT NULL,
+                awaiting_support INTEGER DEFAULT 0
             )
         """)
         await db.commit()
@@ -81,7 +82,24 @@ async def set_user_lang(user_id: int, lang: str):
         """, (user_id, lang))
         await db.commit()
 
-# --- ФОНОВИЙ ТАЙМЕР ЗАВЕРШЕННЯ ТРИАЛУ ТА ПІДПИСКИ ---
+async def set_awaiting_support(user_id: int, state: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO users (user_id, awaiting_support)
+            VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET awaiting_support = excluded.awaiting_support
+        """, (user_id, state))
+        await db.commit()
+
+async def get_awaiting_support(user_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT awaiting_support FROM users WHERE user_id = ?", (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row and row[0] is not None:
+                return row[0]
+    return 0
+
+# --- ФОНОВИЙ ТАЙМЕР ЗВІЛЬНЕННЯ ТРИАЛУ ТА ПІДПИСКИ ---
 
 async def check_expired_trials():
     while True:
@@ -99,8 +117,9 @@ async def check_expired_trials():
 
                 for user_id, username, lang in expired_trials:
                     try:
-                        await bot.ban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
-                        await bot.unban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
+                        if TELEGRAM_CHANNEL_ID:
+                            await bot.ban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
+                            await bot.unban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
                         
                         await db.execute("UPDATE users SET status = 'expired' WHERE user_id = ?", (user_id,))
                         await db.commit()
@@ -134,8 +153,9 @@ async def check_expired_trials():
 
                 for user_id, username, lang in expired_subs:
                     try:
-                        await bot.ban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
-                        await bot.unban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
+                        if TELEGRAM_CHANNEL_ID:
+                            await bot.ban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
+                            await bot.unban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
                         
                         await db.execute("UPDATE users SET status = 'expired' WHERE user_id = ?", (user_id,))
                         await db.commit()
@@ -176,6 +196,7 @@ def get_main_keyboard(lang="ua"):
             [InlineKeyboardButton("🤖 Підключити Signal Bot ($100 / 30 днів)", callback_data="btn_connect_bot")],
             [InlineKeyboardButton("💎 Послуги та ціни", callback_data="btn_services")],
             [InlineKeyboardButton("📜 Правила спільноти", callback_data="btn_rules")],
+            [InlineKeyboardButton("🛟 Підтримка / Допомога", callback_data="btn_support")],
             [InlineKeyboardButton("💬 Чат спільноти", url=PUBLIC_CHAT_LINK)],
             [InlineKeyboardButton("🇬🇧 Switch to English", callback_data="lang_en")]
         ]
@@ -188,6 +209,7 @@ def get_main_keyboard(lang="ua"):
             [InlineKeyboardButton("🤖 Connect Signal Bot ($100 / 30 days)", callback_data="btn_connect_bot")],
             [InlineKeyboardButton("💎 Services & Pricing", callback_data="btn_services")],
             [InlineKeyboardButton("📜 Community Rules", callback_data="btn_rules")],
+            [InlineKeyboardButton("🛟 Support / Help", callback_data="btn_support")],
             [InlineKeyboardButton("💬 Community Chat", url=PUBLIC_CHAT_LINK)],
             [InlineKeyboardButton("🇺🇦 Переключити на Українську", callback_data="lang_ua")]
         ]
@@ -196,6 +218,10 @@ def get_main_keyboard(lang="ua"):
 def get_back_keyboard(lang="ua"):
     back_text = "🔙 Повернутися в меню" if lang == "ua" else "🔙 Back to Menu"
     return InlineKeyboardMarkup([[InlineKeyboardButton(back_text, callback_data="btn_back_main")]])
+
+def get_cancel_support_keyboard(lang="ua"):
+    cancel_text = "❌ Скасувати звернення" if lang == "ua" else "❌ Cancel Support Request"
+    return InlineKeyboardMarkup([[InlineKeyboardButton(cancel_text, callback_data="btn_cancel_support")]])
 
 # --- ТЕКСТИ ПОВІДОМЛЕНЬ ---
 
@@ -240,6 +266,23 @@ def get_text_start(lang="ua"):
         "• 🤝 Respectful communication, no profanity or toxicity.\n"
         "• 🛡️ Fraudulent behavior results in an immediate permanent ban.\n\n"
         "👇 **Choose an option from the menu below:**"
+    )
+
+def get_text_support_prompt(lang="ua"):
+    if lang == "ua":
+        return (
+            "🛟 **СЛУЖБА ПІДТРИМКИ KERDOS**\n\n"
+            "Ви виявили помилку, маєте запитання щодо підписки або потребуєте допомоги з налаштуванням?\n\n"
+            "📝 **Будь ласка, опишіть вашу проблему нижче в одному повідомленні:**\n"
+            "*(Ви також можете додати скріншот або фото помилки)*\n\n"
+            "⏳ *Mireya одразу ж передасть ваше звернення адміністратору!*"
+        )
+    return (
+        "🛟 **KERDOS SUPPORT HELPDESK**\n\n"
+        "Did you encounter an issue, have questions about your subscription, or need setup assistance?\n\n"
+        "📝 **Please describe your issue below in a single message:**\n"
+        "*(You can also attach a screenshot or photo)*\n\n"
+        "⏳ *Mireya will forward your ticket directly to the administrator!*"
     )
 
 def get_text_vip_payment(lang="ua"):
@@ -405,6 +448,9 @@ async def handle_free_trial_request(user_id: int, username: str, lang: str = "ua
         referrer_id = user[1] if user else None
 
         try:
+            if not TELEGRAM_CHANNEL_ID:
+                return "❌ Помилка: Не налаштовано TELEGRAM_CHANNEL_ID."
+
             invite_link = await bot.create_chat_invite_link(
                 chat_id=TELEGRAM_CHANNEL_ID,
                 member_limit=1,
@@ -483,14 +529,10 @@ async def handle_free_trial_request(user_id: int, username: str, lang: str = "ua
 # --- РОЗСИЛКА СИГНАЛІВ НА OKX SIGNAL BOT ТА ЗВІТ АДМІНУ ---
 
 async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, action: str):
-    """
-    tokens_info: список кортежів (user_id, username, signal_token)
-    """
     if not tokens_info:
         logger.info("Немає активних підписників Signal Bot для відправки.")
         return
 
-    # Форматування тікера (наприклад BTC -> BTC-USDT-SWAP)
     formatted_ticker = ticker.replace("USDT", "").replace("-", "")
     instrument = f"{formatted_ticker}-USDT-SWAP"
 
@@ -529,7 +571,6 @@ async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, action: str)
                 logger.error(f"❌ Збій відправки на OKX для {user_disp}: {e}")
                 failed_users.append(f"• {user_disp} (`{user_id}`) — {e}")
 
-    # --- НАДСИЛАННЯ ПРИВАТНОГО ЗВІТУ АДМІНІСТРАТОРУ ---
     if ADMIN_TELEGRAM_ID and bot:
         report = f"🤖 **ЗВІТ РОЗСИЛКИ OKX SIGNAL BOT**\n\n"
         report += f"📊 **Сигнал:** {action.upper()} #{ticker}\n"
@@ -561,11 +602,13 @@ async def telegram_webhook(request: Request):
         if not update:
             return {"status": "ok"}
 
+        # 1. ОБРОБКА ПОВІДОМЛЕНЬ
         if update.message:
             chat_id = update.message.chat_id
             user_id = update.message.from_user.id
             username = update.message.from_user.username or "no_username"
             user_lang = await get_user_lang(user_id)
+            is_awaiting_support = await get_awaiting_support(user_id)
 
             # Обробка введення Signal Token (формат Token: xxx)
             if update.message.text and update.message.text.strip().lower().startswith("token:"):
@@ -583,8 +626,10 @@ async def telegram_webhook(request: Request):
                 return {"status": "ok"}
 
             # Команди та рефералка
-            if update.message.text:
+            if update.message.text and update.message.text.startswith("/"):
                 text = update.message.text.strip()
+                await set_awaiting_support(user_id, 0) # Скидаємо очікування підтримки при використанні команд
+
                 if text.startswith("/start"):
                     args = text.split()
                     if len(args) > 1 and args[1].startswith("ref_"):
@@ -606,13 +651,50 @@ async def telegram_webhook(request: Request):
                     return {"status": "ok"}
 
                 elif text == "/services":
-                    await bot.send_message(chat_id=chat_id, text=get_text_start(user_lang), reply_markup=get_main_keyboard(user_lang), parse_mode="Markdown")
+                    await bot.send_message(chat_id=chat_id, text=get_text_services(user_lang), reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
                     return {"status": "ok"}
                 elif text == "/rules":
                     await bot.send_message(chat_id=chat_id, text=get_text_rules(user_lang), reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
                     return {"status": "ok"}
 
-            # Прийом квитанцій
+            # 📩 ОБРОБКА ЗВЕРНЕННЯ В ПІДТРИМКУ
+            if is_awaiting_support == 1 and ADMIN_TELEGRAM_ID and user_id != ADMIN_TELEGRAM_ID:
+                await set_awaiting_support(user_id, 0)
+                
+                admin_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💬 Ввійти в чат / Відповісти", url=f"tg://user?id={user_id}")]
+                ])
+
+                support_header = f"🛟 **НОВЕ ЗВЕРНЕННЯ В ПІДТРИМКУ!**\n\n👤 **Від:** @{username}\n🆔 **ID:** `{user_id}`\n🌐 **Мова:** {user_lang.upper()}\n"
+
+                if update.message.photo:
+                    photo_file_id = update.message.photo[-1].file_id
+                    caption_text = f"{support_header}\n📝 **Опис:**\n{update.message.caption or 'Без опису'}"
+                    await bot.send_photo(
+                        chat_id=ADMIN_TELEGRAM_ID,
+                        photo=photo_file_id,
+                        caption=caption_text,
+                        reply_markup=admin_keyboard,
+                        parse_mode="Markdown"
+                    )
+                elif update.message.text:
+                    full_support_text = f"{support_header}\n📝 **Опис помилки:**\n{update.message.text}"
+                    await bot.send_message(
+                        chat_id=ADMIN_TELEGRAM_ID,
+                        text=full_support_text,
+                        reply_markup=admin_keyboard,
+                        parse_mode="Markdown"
+                    )
+
+                confirm_text = (
+                    "🚀 **Ваше звернення успішно передано адміністратору!**\n\nМи розглянемо його найближчим часом та зв'яжемося з вами."
+                    if user_lang == "ua" else
+                    "🚀 **Your support request has been delivered to the admin!**\n\nWe will review it and get back to you shortly."
+                )
+                await bot.send_message(chat_id=chat_id, text=confirm_text, reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
+                return {"status": "ok"}
+
+            # 💳 ОБРОБКА КВИТАНЦІЙ ПРО ОПЛАТУ
             if ADMIN_TELEGRAM_ID and user_id != ADMIN_TELEGRAM_ID:
                 admin_keyboard = InlineKeyboardMarkup([
                     [
@@ -625,345 +707,171 @@ async def telegram_webhook(request: Request):
                 admin_text = f"📩 **НОВА КВИТАНЦІЯ!**\n\n👤 **Користувач:** @{username}\n🆔 **ID:** `{user_id}`\n🌐 **Мова:** {user_lang.upper()}"
 
                 if update.message.photo:
-                    await bot.send_photo(chat_id=ADMIN_TELEGRAM_ID, photo=update.message.photo[-1].file_id, caption=admin_text, reply_markup=admin_keyboard, parse_mode="Markdown")
-                elif update.message.document:
-                    await bot.send_document(chat_id=ADMIN_TELEGRAM_ID, document=update.message.document.file_id, caption=admin_text, reply_markup=admin_keyboard, parse_mode="Markdown")
+                    photo_file_id = update.message.photo[-1].file_id
+                    await bot.send_photo(
+                        chat_id=ADMIN_TELEGRAM_ID,
+                        photo=photo_file_id,
+                        caption=admin_text,
+                        reply_markup=admin_keyboard,
+                        parse_mode="Markdown"
+                    )
+                    reply_msg = "✅ **Вашу квитанцію (фото) отримано!** Адміністратор перевірить її найближчим часом." if user_lang == "ua" else "✅ **Receipt received!** The admin will review it shortly."
+                    await bot.send_message(chat_id=chat_id, text=reply_msg)
+                    return {"status": "ok"}
+
                 elif update.message.text:
-                    admin_text += f"\n💬 **Текст:**\n{update.message.text}"
-                    await bot.send_message(chat_id=ADMIN_TELEGRAM_ID, text=admin_text, reply_markup=admin_keyboard, parse_mode="Markdown")
+                    full_admin_text = f"{admin_text}\n\n📝 **Текст / Хеш:**\n`{update.message.text}`"
+                    await bot.send_message(
+                        chat_id=ADMIN_TELEGRAM_ID,
+                        text=full_admin_text,
+                        reply_markup=admin_keyboard,
+                        parse_mode="Markdown"
+                    )
+                    reply_msg = "✅ **Вашу квитанцію отримано!** Адміністратор перевірить її найближчим часом." if user_lang == "ua" else "✅ **Receipt received!** The admin will review it shortly."
+                    await bot.send_message(chat_id=chat_id, text=reply_msg)
+                    return {"status": "ok"}
 
-                confirm_reply = (
-                    "✅ **Квитанцію отримано та передано адміністратору!**\nОчікуйте на підтвердження протягом дня."
-                    if user_lang == "ua" else
-                    "✅ **Receipt received and sent to the administrator!**\nPlease wait for verification."
-                )
-                await bot.send_message(chat_id=chat_id, text=confirm_reply, parse_mode="Markdown")
-
-        # Callback кнопки
+        # 2. ОБРОБКА CALLBACK-КНОПОК
         elif update.callback_query:
             query = update.callback_query
-            chat_id = query.message.chat_id
-            message_id = query.message.message_id
             user_id = query.from_user.id
             username = query.from_user.username or "no_username"
             data = query.data
+            user_lang = await get_user_lang(user_id)
 
-            await bot.answer_callback_query(callback_query_id=query.id)
+            await query.answer()
 
             if data == "lang_ua":
                 await set_user_lang(user_id, "ua")
-                await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=get_text_start("ua"), reply_markup=get_main_keyboard("ua"), parse_mode="Markdown")
+                await query.edit_message_text(text=get_text_start("ua"), reply_markup=get_main_keyboard("ua"), parse_mode="Markdown")
             elif data == "lang_en":
                 await set_user_lang(user_id, "en")
-                await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=get_text_start("en"), reply_markup=get_main_keyboard("en"), parse_mode="Markdown")
+                await query.edit_message_text(text=get_text_start("en"), reply_markup=get_main_keyboard("en"), parse_mode="Markdown")
+
             elif data == "btn_back_main":
-                user_lang = await get_user_lang(user_id)
-                await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=get_text_start(user_lang), reply_markup=get_main_keyboard(user_lang), parse_mode="Markdown")
+                await set_awaiting_support(user_id, 0)
+                await query.edit_message_text(text=get_text_start(user_lang), reply_markup=get_main_keyboard(user_lang), parse_mode="Markdown")
+
+            elif data == "btn_support":
+                await set_awaiting_support(user_id, 1)
+                await query.edit_message_text(text=get_text_support_prompt(user_lang), reply_markup=get_cancel_support_keyboard(user_lang), parse_mode="Markdown")
+
+            elif data == "btn_cancel_support":
+                await set_awaiting_support(user_id, 0)
+                cancel_msg = "❌ Звернення в підтримку скасовано." if user_lang == "ua" else "❌ Support request cancelled."
+                await query.edit_message_text(text=f"{cancel_msg}\n\n{get_text_start(user_lang)}", reply_markup=get_main_keyboard(user_lang), parse_mode="Markdown")
+
             elif data == "btn_services":
-                user_lang = await get_user_lang(user_id)
-                await bot.send_message(chat_id=chat_id, text=get_text_services(user_lang), reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
+                await query.edit_message_text(text=get_text_services(user_lang), reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
+
             elif data == "btn_rules":
-                user_lang = await get_user_lang(user_id)
-                await bot.send_message(chat_id=chat_id, text=get_text_rules(user_lang), reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
+                await query.edit_message_text(text=get_text_rules(user_lang), reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
+
+            elif data == "btn_buy_group":
+                await query.edit_message_text(text=get_text_vip_payment(user_lang), reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
+
+            elif data == "btn_connect_bot":
+                await query.edit_message_text(text=get_text_bot_payment(user_lang), reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
+
             elif data == "btn_referral":
-                user_lang = await get_user_lang(user_id)
                 me = await bot.get_me()
                 ref_text = await get_referral_text(user_id, me.username, user_lang)
-                await bot.send_message(chat_id=chat_id, text=ref_text, reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
+                await query.edit_message_text(text=ref_text, reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
+
             elif data == "btn_free_trial":
-                user_lang = await get_user_lang(user_id)
-                response_text = await handle_free_trial_request(user_id, username, user_lang)
-                await bot.send_message(chat_id=chat_id, text=response_text, parse_mode="Markdown")
-            elif data == "btn_buy_group":
-                user_lang = await get_user_lang(user_id)
-                await bot.send_message(chat_id=chat_id, text=get_text_vip_payment(user_lang), reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
-            elif data == "btn_connect_bot":
-                user_lang = await get_user_lang(user_id)
-                await bot.send_message(chat_id=chat_id, text=get_text_bot_payment(user_lang), reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
+                res_text = await handle_free_trial_request(user_id, username, user_lang)
+                await query.edit_message_text(text=res_text, reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
 
-            # Перевірка статусу підписки
             elif data == "btn_my_sub":
-                user_lang = await get_user_lang(user_id)
-                now = datetime.now(timezone.utc)
-
                 async with aiosqlite.connect(DB_PATH) as db:
-                    async with db.execute(
-                        "SELECT status, trial_end, sub_end, bot_sub_end FROM users WHERE user_id = ?", 
-                        (user_id,)
-                    ) as cursor:
+                    async with db.execute("SELECT status, trial_end, sub_end, bot_sub_end, signal_token FROM users WHERE user_id = ?", (user_id,)) as cursor:
                         row = await cursor.fetchone()
 
                 if not row:
-                    sub_info = (
-                        "ℹ️ **У вас немає активних підписок.**\n\nВи можете активувати 14 днів FREE або придбати доступ у меню."
-                        if user_lang == "ua" else
-                        "ℹ️ **You don't have any active subscriptions.**\n\nYou can claim your 14-day FREE trial or buy a subscription in the main menu."
-                    )
+                    sub_info = "У вас немає активних підписок." if user_lang == "ua" else "You have no active subscriptions."
                 else:
-                    status, trial_end, sub_end, bot_sub_end = row
-                    lines = []
+                    status, t_end, s_end, b_end, token = row
+                    sub_info = f"📊 **Статус:** `{status.upper()}`\n\n"
+                    if t_end: sub_info += f"🎁 **Триал до:** {t_end[:16].replace('T', ' ')} UTC\n"
+                    if s_end: sub_info += f"💎 **VIP-група до:** {s_end[:16].replace('T', ' ')} UTC\n"
+                    if b_end: sub_info += f"🤖 **Signal Bot до:** {b_end[:16].replace('T', ' ')} UTC\n"
+                    if token: sub_info += f"🔑 **OKX Token:** `{token[:6]}...{token[-4:]}`"
 
-                    def parse_dt(dt_str):
-                        if not dt_str:
-                            return None
-                        try:
-                            dt = datetime.fromisoformat(dt_str)
-                            if dt.tzinfo is None:
-                                dt = dt.replace(tzinfo=timezone.utc)
-                            return dt
-                        except ValueError:
-                            return None
+                await query.edit_message_text(text=sub_info, reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
 
-                    dt_trial = parse_dt(trial_end)
-                    dt_sub = parse_dt(sub_end)
-                    dt_bot = parse_dt(bot_sub_end)
-
-                    # VIP-група або Trial
-                    if status == 'trial' and dt_trial and dt_trial > now:
-                        days_left = (dt_trial - now).days
-                        hours_left = int((dt_trial - now).seconds / 3600)
-                        lines.append(
-                            f"🎁 **Тестовий період (VIP):** залишилося **{days_left} дн. {hours_left} год.**\n*(до {dt_trial.strftime('%Y-%m-%d %H:%M UTC')})*"
-                            if user_lang == "ua" else
-                            f"🎁 **Free Trial (VIP):** **{days_left}d {hours_left}h** remaining\n*(valid until {dt_trial.strftime('%Y-%m-%d %H:%M UTC')})*"
-                        )
-                    elif dt_sub and dt_sub > now:
-                        days_left = (dt_sub - now).days
-                        hours_left = int((dt_sub - now).seconds / 3600)
-                        lines.append(
-                            f"📊 **VIP-група Kerdos:** залишилося **{days_left} дн. {hours_left} год.**\n*(до {dt_sub.strftime('%Y-%m-%d %H:%M UTC')})*"
-                            if user_lang == "ua" else
-                            f"📊 **Kerdos VIP Group:** **{days_left}d {hours_left}h** remaining\n*(valid until {dt_sub.strftime('%Y-%m-%d %H:%M UTC')})*"
-                        )
-                    else:
-                        lines.append(
-                            "📊 **VIP-група:** підписка неактивна або закінчилася"
-                            if user_lang == "ua" else
-                            "📊 **VIP Group:** Subscription is inactive or expired"
-                        )
-
-                    # Signal Bot
-                    if dt_bot and dt_bot > now:
-                        days_left = (dt_bot - now).days
-                        hours_left = int((dt_bot - now).seconds / 3600)
-                        lines.append(
-                            f"🤖 **Signal Bot:** залишилося **{days_left} дн. {hours_left} год.**\n*(до {dt_bot.strftime('%Y-%m-%d %H:%M UTC')})*"
-                            if user_lang == "ua" else
-                            f"🤖 **Signal Bot:** **{days_left}d {hours_left}h** remaining\n*(valid until {dt_bot.strftime('%Y-%m-%d %H:%M UTC')})*"
-                        )
-                    else:
-                        lines.append(
-                            "🤖 **Signal Bot:** не підключено"
-                            if user_lang == "ua" else
-                            "🤖 **Signal Bot:** Not connected"
-                        )
-
-                    header = "⏳ **Інформація про ваші підписки:**\n\n" if user_lang == "ua" else "⏳ **Your Subscription Status:**\n\n"
-                    sub_info = header + "\n\n".join(lines)
-
-                await bot.send_message(chat_id=chat_id, text=sub_info, reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
-
-            # Підтвердження адміна
-            elif data.startswith("approve_vip_"):
-                target_user_id = int(data.split("_")[2])
+            # АДМІНСЬКІ ДІЇ (ПІДТВЕРДЖЕННЯ / ВІДХИЛЕННЯ)
+            elif data.startswith(("approve_vip_", "approve_bot_", "decline_")) and user_id == ADMIN_TELEGRAM_ID:
+                action_type, target_user_id = data.rsplit("_", 1)
+                target_user_id = int(target_user_id)
                 target_lang = await get_user_lang(target_user_id)
                 now = datetime.now(timezone.utc)
+                new_end = now + timedelta(days=30)
 
                 async with aiosqlite.connect(DB_PATH) as db:
-                    async with db.execute("SELECT sub_end FROM users WHERE user_id = ?", (target_user_id,)) as cursor:
-                        row = await cursor.fetchone()
+                    if action_type == "approve_vip":
+                        await db.execute("UPDATE users SET status = 'active', sub_end = ? WHERE user_id = ?", (new_end.isoformat(), target_user_id))
+                        await db.commit()
+                        
+                        invite_link = await bot.create_chat_invite_link(chat_id=TELEGRAM_CHANNEL_ID, member_limit=1) if TELEGRAM_CHANNEL_ID else None
+                        link_str = invite_link.invite_link if invite_link else "Перевірте канал."
 
-                    current_sub_end = None
-                    if row and row[0]:
-                        try:
-                            current_sub_end = datetime.fromisoformat(row[0])
-                            if current_sub_end.tzinfo is None:
-                                current_sub_end = current_sub_end.replace(tzinfo=timezone.utc)
-                        except ValueError:
-                            current_sub_end = None
+                        user_msg = f"🎉 **Оплату VIP-групи підтверджено!**\n\n🔗 Ваше посилання для входу: {link_str}" if target_lang == "ua" else f"🎉 **VIP payment approved!**\n\n🔗 Link: {link_str}"
+                        await bot.send_message(chat_id=target_user_id, text=user_msg)
+                        await query.edit_message_text(text=f"✅ VIP підтверджено для ID: `{target_user_id}`")
 
-                    if current_sub_end and current_sub_end > now:
-                        new_sub_end = current_sub_end + timedelta(days=30)
-                    else:
-                        new_sub_end = now + timedelta(days=30)
+                    elif action_type == "approve_bot":
+                        await db.execute("UPDATE users SET bot_sub_end = ? WHERE user_id = ?", (new_end.isoformat(), target_user_id))
+                        await db.commit()
 
-                    await db.execute("UPDATE users SET status = 'active', sub_end = ? WHERE user_id = ?", (new_sub_end.isoformat(), target_user_id))
-                    await db.commit()
+                        await bot.send_message(chat_id=target_user_id, text=get_text_okx_instruction(target_lang), parse_mode="Markdown")
+                        await query.edit_message_text(text=f"✅ Signal Bot підтверджено для ID: `{target_user_id}`")
 
-                invite_link = await bot.create_chat_invite_link(
-                    chat_id=TELEGRAM_CHANNEL_ID,
-                    member_limit=1,
-                    expire_date=int((now + timedelta(hours=48)).timestamp())
-                )
+                    elif action_type == "decline":
+                        user_msg = "❌ **Вашу квитанцію відхилено.** Якщо ви виявили помилку, зверніться до підтримки." if target_lang == "ua" else "❌ **Receipt declined.** Please contact support if you believe this is an error."
+                        await bot.send_message(chat_id=target_user_id, text=user_msg)
+                        await query.edit_message_text(text=f"❌ Оплату відхилено для ID: `{target_user_id}`")
 
-                approval_msg = (
-                    f"🎉 **Вашу оплату VIP-групи Kerdos підтверджено!**\n\n"
-                    f"⏰ Новий термін підписки активний до: **{new_sub_end.strftime('%Y-%m-%d %H:%M UTC')}**\n\n"
-                    f"🔗 **Посилання для входу:**\n{invite_link.invite_link}"
-                    if target_lang == "ua" else
-                    f"🎉 **Your Kerdos VIP subscription has been approved!**\n\n"
-                    f"⏰ New expiration date: **{new_sub_end.strftime('%Y-%m-%d %H:%M UTC')}**\n\n"
-                    f"🔗 **Your invite link:**\n{invite_link.invite_link}"
-                )
-                await bot.send_message(chat_id=target_user_id, text=approval_msg, parse_mode="Markdown")
-
-            elif data.startswith("approve_bot_"):
-                target_user_id = int(data.split("_")[2])
-                target_lang = await get_user_lang(target_user_id)
-                now = datetime.now(timezone.utc)
-
-                async with aiosqlite.connect(DB_PATH) as db:
-                    async with db.execute("SELECT bot_sub_end FROM users WHERE user_id = ?", (target_user_id,)) as cursor:
-                        row = await cursor.fetchone()
-
-                    current_bot_sub_end = None
-                    if row and row[0]:
-                        try:
-                            current_bot_sub_end = datetime.fromisoformat(row[0])
-                            if current_bot_sub_end.tzinfo is None:
-                                current_bot_sub_end = current_bot_sub_end.replace(tzinfo=timezone.utc)
-                        except ValueError:
-                            current_bot_sub_end = None
-
-                    if current_bot_sub_end and current_bot_sub_end > now:
-                        new_bot_sub_end = current_bot_sub_end + timedelta(days=30)
-                    else:
-                        new_bot_sub_end = now + timedelta(days=30)
-
-                    await db.execute("UPDATE users SET bot_sub_end = ? WHERE user_id = ?", (new_bot_sub_end.isoformat(), target_user_id))
-                    await db.commit()
-
-                await bot.send_message(chat_id=target_user_id, text=get_text_okx_instruction(target_lang), parse_mode="Markdown")
-
-            elif data.startswith("decline_"):
-                target_user_id = int(data.split("_")[1])
-                target_lang = await get_user_lang(target_user_id)
-                decline_msg = (
-                    "❌ **На жаль, вашу квитанцію не було підтверджено.**"
-                    if target_lang == "ua" else
-                    "❌ **Unfortunately, your receipt could not be verified.**"
-                )
-                await bot.send_message(chat_id=target_user_id, text=decline_msg, parse_mode="Markdown")
-
-        return {"status": "ok"}
     except Exception as e:
         logger.error(f"Error handling Telegram webhook: {e}")
-        return {"status": "error", "message": str(e)}
 
-# --- TRADINGVIEW WEBHOOK (ОБРОБКА СИГНАЛІВ ТА АВТО-ТРЕЙДИНГ) ---
+    return {"status": "ok"}
 
-@app.post("/webhook")
-async def webhook(request: Request):
+# --- ЕНДПОІНТ ДЛЯ ПРИЙОМУ СИГНАЛІВ З TRADINGVIEW (WEBHOOK) ---
+
+@app.post("/tradingview_webhook")
+async def tradingview_webhook(request: Request):
     try:
-        raw_body = await request.body()
-        data = json.loads(raw_body.decode("utf-8"))
-        
-        ticker = data.get("ticker", "UNKNOWN").upper()
-        action = data.get("action", "").lower()
-        price = float(data.get("price", 0.0))
-        entry_price_raw = data.get("entry_price", "0")
-        
-        try:
-            entry_price = float(entry_price_raw)
-        except (ValueError, TypeError):
-            entry_price = 0.0
+        data = await request.json()
+        ticker = data.get("ticker", "UNKNOWN")
+        action = data.get("action", "buy").lower()
+        price = data.get("price", 0.0)
 
         now = datetime.now(timezone.utc)
-        message_text = ""
 
-        # 1. Пошук активних користувачів, їх Telegram ID, ім'я та токенів
+        # 1. Запис у локальну БД
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("INSERT INTO trades (ticker, action, price, timestamp) VALUES (?, ?, ?, ?)",
+                             (ticker, action, price, now.isoformat()))
+            await db.commit()
+
+        # 2. Публікація сигналу в VIP Telegram-канал
+        if TELEGRAM_CHANNEL_ID and bot:
+            signal_text = f"🚨 **KERDOS SIGNAL** 🚨\n\n📊 **Монета:** #{ticker}\n🎯 **Дія:** {action.upper()}\n💵 **Ціна:** {price}\n⏰ **Час:** {now.strftime('%Y-%m-%d %H:%M UTC')}"
+            await bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=signal_text, parse_mode="Markdown")
+
+        # 3. Трансляція сигналу активним користувачам OKX Signal Bot
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute(
-                "SELECT user_id, username, signal_token FROM users WHERE bot_sub_end > ? AND signal_token IS NOT NULL AND signal_token != ''",
+                "SELECT user_id, username, signal_token FROM users WHERE signal_token IS NOT NULL AND bot_sub_end > ?",
                 (now.isoformat(),)
             ) as cursor:
-                active_users_data = await cursor.fetchall()  # [(user_id, username, token), ...]
+                bot_subscribers = await cursor.fetchall()
 
-        # 2. Розсилка сигналу на OKX у фоні
-        if active_users_data:
-            asyncio.create_task(send_signal_to_okx(active_users_data, ticker, action))
+        if bot_subscribers:
+            await send_signal_to_okx(bot_subscribers, ticker, action)
 
-        # 3. Публікація в Telegram канал
-        if action in ["buy", "long"]:
-            message_text = (
-                f"🚀 **KERDOS SIGNAL: ENTRY LONG**\n\n"
-                f"🪙 **Asset:** #{ticker}\n"
-                f"💵 **Entry Price:** {price:.4f}\n"
-                f"🤖 **Auto-traded via OKX:** {len(active_users_data)} bot(s)\n"
-                f"⏰ **Time:** {now.strftime('%Y-%m-%d %H:%M UTC')}"
-            )
-        elif action in ["sell", "short"]:
-            message_text = (
-                f"🔻 **KERDOS SIGNAL: ENTRY SHORT**\n\n"
-                f"🪙 **Asset:** #{ticker}\n"
-                f"💵 **Entry Price:** {price:.4f}\n"
-                f"🤖 **Auto-traded via OKX:** {len(active_users_data)} bot(s)\n"
-                f"⏰ **Time:** {now.strftime('%Y-%m-%d %H:%M UTC')}"
-            )
-        elif action in ["close", "exit"] or entry_price != 0:
-            roi = 0.0
-            if entry_price > 0:
-                roi = ((price - entry_price) / entry_price) * 100
-                
-            roi_emoji = "🟢" if roi >= 0 else "🔴"
-            
-            async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute(
-                    "INSERT INTO trades (ticker, action, price, roi, timestamp) VALUES (?, ?, ?, ?, ?)",
-                    (ticker, action, price, roi, now.isoformat())
-                )
-                await db.commit()
-
-            message_text = (
-                f"🏁 **KERDOS SIGNAL: POSITION CLOSED**\n\n"
-                f"🪙 **Asset:** #{ticker}\n"
-                f"💵 **Exit Price:** {price:.4f}\n"
-                f"📈 **Result (ROI):** {roi_emoji} **{roi:+.2f}%**\n"
-                f"⏰ **Time:** {now.strftime('%Y-%m-%d %H:%M UTC')}"
-            )
-
-        if message_text and bot and TELEGRAM_CHANNEL_ID:
-            await bot.send_message(
-                chat_id=TELEGRAM_CHANNEL_ID,
-                text=message_text,
-                parse_mode="Markdown"
-            )
-
-        return {"status": "ok", "sent_to_okx_bots": len(active_users_data)}
     except Exception as e:
-        logger.error(f"Error processing webhook: {e}")
+        logger.error(f"Error processing TradingView webhook: {e}")
         return {"status": "error", "message": str(e)}
 
-@app.get("/monthly_report")
-async def generate_monthly_report():
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT roi FROM trades") as cursor:
-            rows = await cursor.fetchall()
-            
-    if not rows:
-        report_text = "📊 **KERDOS MONTHLY PERFORMANCE REPORT**\n\nNo trades closed this month."
-    else:
-        rois = [r[0] for r in rows]
-        total_trades = len(rois)
-        winning_trades = sum(1 for r in rois if r > 0)
-        win_rate = (winning_trades / total_trades) * 100 if total_trades > 0 else 0
-        total_roi = sum(rois)
-        
-        roi_emoji = "🟢" if total_roi >= 0 else "🔴"
-        
-        report_text = (
-            f"📊 **KERDOS MONTHLY PERFORMANCE REPORT**\n\n"
-            f"🔢 **Total Trades:** {total_trades}\n"
-            f"🎯 **Win Rate:** {win_rate:.1f}%\n"
-            f"💰 **Total Net ROI:** {roi_emoji} **{total_roi:+.2f}%**\n\n"
-            f"💡 *All signals generated automatically by Kerdos system.*"
-        )
-        
-    if bot and TELEGRAM_CHANNEL_ID:
-        await bot.send_message(
-            chat_id=TELEGRAM_CHANNEL_ID,
-            text=report_text,
-            parse_mode="Markdown"
-        )
-        
-    return {"status": "ok", "report": report_text}
+    return {"status": "ok"}
