@@ -53,7 +53,8 @@ async def init_db():
                 bot_sub_end DATETIME,
                 signal_token TEXT,
                 status TEXT DEFAULT 'free',
-                lang TEXT DEFAULT 'ua'
+                lang TEXT DEFAULT 'ua',
+                referrer_id INTEGER DEFAULT NULL
             )
         """)
         await db.commit()
@@ -163,7 +164,9 @@ async def startup_event():
 def get_main_keyboard(lang="ua"):
     if lang == "ua":
         keyboard = [
+            [InlineKeyboardButton("⏳ Моя підписка", callback_data="btn_my_sub")],
             [InlineKeyboardButton("🎁 Отримати 14 днів FREE", callback_data="btn_free_trial")],
+            [InlineKeyboardButton("👥 Реферальна програма", callback_data="btn_referral")],
             [InlineKeyboardButton("📊 Доступ до VIP-групи ($20 / 30 днів)", callback_data="btn_buy_group")],
             [InlineKeyboardButton("🤖 Підключити Signal Bot ($100 / 30 днів)", callback_data="btn_connect_bot")],
             [InlineKeyboardButton("💎 Послуги та ціни", callback_data="btn_services")],
@@ -173,7 +176,9 @@ def get_main_keyboard(lang="ua"):
         ]
     else:
         keyboard = [
+            [InlineKeyboardButton("⏳ My Subscription", callback_data="btn_my_sub")],
             [InlineKeyboardButton("🎁 Get 14-Day Free Trial", callback_data="btn_free_trial")],
+            [InlineKeyboardButton("👥 Referral Program", callback_data="btn_referral")],
             [InlineKeyboardButton("📊 VIP Signals Group Access ($20 / 30 days)", callback_data="btn_buy_group")],
             [InlineKeyboardButton("🤖 Connect Signal Bot ($100 / 30 days)", callback_data="btn_connect_bot")],
             [InlineKeyboardButton("💎 Services & Pricing", callback_data="btn_services")],
@@ -196,7 +201,7 @@ def get_text_start(lang="ua"):
             "Я — **Mireya**, ваш персональний помічник аналітичної торгової системи **Kerdos**.\n\n"
             "🎁 **Спеціальні пропозиції та Бонуси:**\n"
             "• 🚀 **14 днів FREE-доступу:** Кожен новий користувач отримує 2 тижні безкоштовного тестового доступу до VIP-групи Kerdos!\n"
-            "• 👥 **Реферальна програма «Приведи друга»:** За кожного друга, який придбає підписку — отримуй **+14 днів безкоштовного доступу**!\n\n"
+            "• 👥 **Реферальна програма «Приведи друга»:** За кожного друга, який візьме безкоштовний пробний період — отримуй **+14 днів безкоштовного доступу**!\n\n"
             "💎 **Наші Послуги та Прайс:**\n"
             "• 📊 **VIP-група з сигналами Kerdos:** **$20 / 30 днів** *(Аналітика ринку, торгові сигнали та чат спільноти)*\n"
             "• 🤖 **Персональний Signal Bot:** **$100 / 30 днів** *(Автоматичне підключення вашого акаунту OKX для миттєвої торгівлі)*\n\n"
@@ -216,7 +221,7 @@ def get_text_start(lang="ua"):
         "I am **Mireya**, your personal assistant for the **Kerdos** trading system.\n\n"
         "🎁 **Special Offers & Bonuses:**\n"
         "• 🚀 **14-Day FREE Trial:** Every new user gets 2 weeks of free trial access to our Kerdos VIP Signals Group!\n"
-        "• 👥 **\"Refer a Friend\" Program:** Bring a friend, and once they subscribe, get **+14 days of free VIP access**!\n\n"
+        "• 👥 **\"Refer a Friend\" Program:** Bring a friend, and once they claim their free trial, get **+14 days of free VIP access**!\n\n"
         "💎 **Services & Pricing:**\n"
         "• 📊 **Kerdos VIP Signals Group:** **$20 / 30 days** *(Market analytics, trade signals, and community access)*\n"
         "• 🤖 **Personal Signal Bot Setup:** **$100 / 30 days** *(Direct OKX bot connection for automated signal execution)*\n\n"
@@ -298,7 +303,7 @@ def get_text_services(lang="ua"):
             "🤖 **Персональний Signal Bot:** **$100 / 30 днів**\n\n"
             "🎁 **Бонуси:**\n"
             "• **14 днів FREE** для нових користувачів!\n"
-            "• **+14 днів** за кожного друга, який придбає підписку!"
+            "• **+14 днів** за кожного друга, який візьме безкоштовний пробний період!"
         )
     return (
         "💎 **Services & Pricing (Kerdos)**\n\n"
@@ -306,7 +311,7 @@ def get_text_services(lang="ua"):
         "🤖 **Personal Signal Bot Setup:** **$100 / 30 days**\n\n"
         "🎁 **Bonuses:**\n"
         "• **14-Day FREE Trial** for new users!\n"
-        "• **+14 Days Free Access** for every referred friend who subscribes!"
+        "• **+14 Days Free Access** for every referred friend who claims their free trial!"
     )
 
 def get_text_rules(lang="ua"):
@@ -353,20 +358,46 @@ def get_text_okx_instruction(lang="ua"):
         "`Token: your_signal_token_here`"
     )
 
-# --- ЛОГІКА ТРИАЛУ ---
+# --- РЕФЕРАЛЬНА ПРОГРАМА ТА ЛОГІКА ТРИАЛУ ---
+
+async def get_referral_text(user_id: int, bot_username: str, lang: str = "ua") -> str:
+    ref_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+    
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT COUNT(*) FROM users WHERE referrer_id = ? AND trial_used = 1", (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            active_refs = row[0] if row else 0
+
+    if lang == "ua":
+        return (
+            "👥 **Реферальна програма Kerdos «Приведи друга»**\n\n"
+            "Запрошуйте друзів та отримуйте **+14 днів безкоштовного доступу** до VIP-групи за кожного друга, який активує безкоштовний пробний період!\n\n"
+            f"🔗 **Ваше персональне посилання:**\n`{ref_link}`\n\n"
+            f"📊 **Ваші запрошені друзі, які взяли FREE-триал:** {active_refs}\n\n"
+            "*(Натисніть на посилання, щоб скопіювати його та поділитися з друзями)*"
+        )
+    return (
+        "👥 **Kerdos Referral Program \"Refer a Friend\"**\n\n"
+        "Invite your friends and receive **+14 days of free VIP access** for every friend who activates their free trial!\n\n"
+        f"🔗 **Your personal referral link:**\n`{ref_link}`\n\n"
+        f"📊 **Friends who claimed FREE trial:** {active_refs}\n\n"
+        "*(Tap the link to copy and share it with your friends)*"
+    )
 
 async def handle_free_trial_request(user_id: int, username: str, lang: str = "ua"):
     now = datetime.now(timezone.utc)
     trial_end = now + timedelta(days=14)
 
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT trial_used FROM users WHERE user_id = ?", (user_id,)) as cursor:
+        async with db.execute("SELECT trial_used, referrer_id FROM users WHERE user_id = ?", (user_id,)) as cursor:
             user = await cursor.fetchone()
 
         if user and user[0] == 1:
             if lang == "ua":
                 return "⚠️ **Ви вже використовували безкоштовний 14-денний період.**\n\nВи можете оформити підписку у головному меню."
             return "⚠️ **You have already used your 14-day free trial.**\n\nYou can subscribe in the main menu."
+
+        referrer_id = user[1] if user else None
 
         try:
             invite_link = await bot.create_chat_invite_link(
@@ -385,6 +416,53 @@ async def handle_free_trial_request(user_id: int, username: str, lang: str = "ua
                     status = 'trial'
             """, (user_id, username, now.isoformat(), trial_end.isoformat(), lang))
             await db.commit()
+
+            # --- АВТОМАТИЧНЕ НАРАХУВАННЯ БОНУСУ ЗАПРОШУЮЧОМУ ---
+            if referrer_id:
+                async with db.execute("SELECT trial_end, sub_end, status, lang FROM users WHERE user_id = ?", (referrer_id,)) as cursor:
+                    ref_user = await cursor.fetchone()
+
+                if ref_user:
+                    ref_trial_end, ref_sub_end, ref_status, ref_lang = ref_user
+                    ref_lang = ref_lang or "ua"
+
+                    # 1. Якщо у запрошуючого діє платна підписка
+                    if ref_status == 'active' and ref_sub_end:
+                        curr_end = datetime.fromisoformat(ref_sub_end)
+                        if curr_end.tzinfo is None:
+                            curr_end = curr_end.replace(tzinfo=timezone.utc)
+                        base_time = max(now, curr_end)
+                        new_end = base_time + timedelta(days=14)
+                        await db.execute("UPDATE users SET sub_end = ? WHERE user_id = ?", (new_end.isoformat(), referrer_id))
+
+                    # 2. Якщо у нього діє або був триал
+                    else:
+                        curr_end = None
+                        if ref_trial_end:
+                            curr_end = datetime.fromisoformat(ref_trial_end)
+                            if curr_end.tzinfo is None:
+                                curr_end = curr_end.replace(tzinfo=timezone.utc)
+                        
+                        base_time = max(now, curr_end) if curr_end else now
+                        new_end = base_time + timedelta(days=14)
+                        await db.execute("UPDATE users SET trial_end = ?, status = 'trial' WHERE user_id = ?", (new_end.isoformat(), referrer_id))
+
+                    await db.commit()
+
+                    # Повідомляємо запрошуючого про бонус
+                    bonus_msg = (
+                        f"🥳 **Ваш друг (@{username}) взяв безкоштовний тестовий період!**\n\n"
+                        f"🎁 Вам автоматично нараховано **+14 днів безкоштовного доступу** до Kerdos VIP!\n"
+                        f"⏰ Новий термін дії доступу: **{new_end.strftime('%Y-%m-%d %H:%M UTC')}**"
+                        if ref_lang == "ua" else
+                        f"🥳 **Your friend (@{username}) claimed their free trial!**\n\n"
+                        f"🎁 You have automatically received **+14 free days** of Kerdos VIP access!\n"
+                        f"⏰ New expiration date: **{new_end.strftime('%Y-%m-%d %H:%M UTC')}**"
+                    )
+                    try:
+                        await bot.send_message(chat_id=referrer_id, text=bonus_msg, parse_mode="Markdown")
+                    except Exception as e:
+                        logger.error(f"Failed to notify referrer {referrer_id}: {e}")
 
             if lang == "ua":
                 return (
@@ -433,10 +511,30 @@ async def telegram_webhook(request: Request):
                 await bot.send_message(chat_id=chat_id, text=success_text, parse_mode="Markdown")
                 return {"status": "ok"}
 
-            # Текстові команди
+            # Текстові команди та реферальний старт (/start ref_123456)
             if update.message.text:
                 text = update.message.text.strip()
-                if text in ["/start", "/services"]:
+                if text.startswith("/start"):
+                    args = text.split()
+                    if len(args) > 1 and args[1].startswith("ref_"):
+                        try:
+                            ref_id = int(args[1].split("_")[1])
+                            if ref_id != user_id:
+                                async with aiosqlite.connect(DB_PATH) as db:
+                                    await db.execute("""
+                                        INSERT INTO users (user_id, username, referrer_id, lang)
+                                        VALUES (?, ?, ?, ?)
+                                        ON CONFLICT(user_id) DO UPDATE SET
+                                            referrer_id = COALESCE(users.referrer_id, excluded.referrer_id)
+                                    """, (user_id, username, ref_id, user_lang))
+                                    await db.commit()
+                        except ValueError:
+                            pass
+
+                    await bot.send_message(chat_id=chat_id, text=get_text_start(user_lang), reply_markup=get_main_keyboard(user_lang), parse_mode="Markdown")
+                    return {"status": "ok"}
+
+                elif text == "/services":
                     await bot.send_message(chat_id=chat_id, text=get_text_start(user_lang), reply_markup=get_main_keyboard(user_lang), parse_mode="Markdown")
                     return {"status": "ok"}
                 elif text == "/rules":
@@ -496,6 +594,11 @@ async def telegram_webhook(request: Request):
             elif data == "btn_rules":
                 user_lang = await get_user_lang(user_id)
                 await bot.send_message(chat_id=chat_id, text=get_text_rules(user_lang), reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
+            elif data == "btn_referral":
+                user_lang = await get_user_lang(user_id)
+                me = await bot.get_me()
+                ref_text = await get_referral_text(user_id, me.username, user_lang)
+                await bot.send_message(chat_id=chat_id, text=ref_text, reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
             elif data == "btn_free_trial":
                 user_lang = await get_user_lang(user_id)
                 response_text = await handle_free_trial_request(user_id, username, user_lang)
@@ -507,7 +610,89 @@ async def telegram_webhook(request: Request):
                 user_lang = await get_user_lang(user_id)
                 await bot.send_message(chat_id=chat_id, text=get_text_bot_payment(user_lang), reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
 
-            # --- АДМІН СХВАЛЕННЯ З ДОДАВАННЯМ ЗАЛИШКУ ДНІВ ---
+            # --- ПЕРЕВІРКА ТЕРМІНУ ДІЇ ПІДПИСКИ ---
+            elif data == "btn_my_sub":
+                user_lang = await get_user_lang(user_id)
+                now = datetime.now(timezone.utc)
+
+                async with aiosqlite.connect(DB_PATH) as db:
+                    async with db.execute(
+                        "SELECT status, trial_end, sub_end, bot_sub_end FROM users WHERE user_id = ?", 
+                        (user_id,)
+                    ) as cursor:
+                        row = await cursor.fetchone()
+
+                if not row:
+                    sub_info = (
+                        "ℹ️ **У вас немає активних підписок.**\n\nВи можете активувати 14 днів FREE або придбати доступ у меню."
+                        if user_lang == "ua" else
+                        "ℹ️ **You don't have any active subscriptions.**\n\nYou can claim your 14-day FREE trial or buy a subscription in the main menu."
+                    )
+                else:
+                    status, trial_end, sub_end, bot_sub_end = row
+                    lines = []
+
+                    def parse_dt(dt_str):
+                        if not dt_str:
+                            return None
+                        try:
+                            dt = datetime.fromisoformat(dt_str)
+                            if dt.tzinfo is None:
+                                dt = dt.replace(tzinfo=timezone.utc)
+                            return dt
+                        except ValueError:
+                            return None
+
+                    dt_trial = parse_dt(trial_end)
+                    dt_sub = parse_dt(sub_end)
+                    dt_bot = parse_dt(bot_sub_end)
+
+                    # 1. VIP-група або Trial
+                    if status == 'trial' and dt_trial and dt_trial > now:
+                        days_left = (dt_trial - now).days
+                        hours_left = int((dt_trial - now).seconds / 3600)
+                        lines.append(
+                            f"🎁 **Тестовий період (VIP):** залишилося **{days_left} дн. {hours_left} год.**\n*(до {dt_trial.strftime('%Y-%m-%d %H:%M UTC')})*"
+                            if user_lang == "ua" else
+                            f"🎁 **Free Trial (VIP):** **{days_left}d {hours_left}h** remaining\n*(valid until {dt_trial.strftime('%Y-%m-%d %H:%M UTC')})*"
+                        )
+                    elif dt_sub and dt_sub > now:
+                        days_left = (dt_sub - now).days
+                        hours_left = int((dt_sub - now).seconds / 3600)
+                        lines.append(
+                            f"📊 **VIP-група Kerdos:** залишилося **{days_left} дн. {hours_left} год.**\n*(до {dt_sub.strftime('%Y-%m-%d %H:%M UTC')})*"
+                            if user_lang == "ua" else
+                            f"📊 **Kerdos VIP Group:** **{days_left}d {hours_left}h** remaining\n*(valid until {dt_sub.strftime('%Y-%m-%d %H:%M UTC')})*"
+                        )
+                    else:
+                        lines.append(
+                            "📊 **VIP-група:** підписка неактивна або закінчилася"
+                            if user_lang == "ua" else
+                            "📊 **VIP Group:** Subscription is inactive or expired"
+                        )
+
+                    # 2. Signal Bot
+                    if dt_bot and dt_bot > now:
+                        days_left = (dt_bot - now).days
+                        hours_left = int((dt_bot - now).seconds / 3600)
+                        lines.append(
+                            f"🤖 **Signal Bot:** залишилося **{days_left} дн. {hours_left} год.**\n*(до {dt_bot.strftime('%Y-%m-%d %H:%M UTC')})*"
+                            if user_lang == "ua" else
+                            f"🤖 **Signal Bot:** **{days_left}d {hours_left}h** remaining\n*(valid until {dt_bot.strftime('%Y-%m-%d %H:%M UTC')})*"
+                        )
+                    else:
+                        lines.append(
+                            "🤖 **Signal Bot:** не підключено"
+                            if user_lang == "ua" else
+                            "🤖 **Signal Bot:** Not connected"
+                        )
+
+                    header = "⏳ **Інформація про ваші підписки:**\n\n" if user_lang == "ua" else "⏳ **Your Subscription Status:**\n\n"
+                    sub_info = header + "\n\n".join(lines)
+
+                await bot.send_message(chat_id=chat_id, text=sub_info, reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
+
+            # --- АДМІН СХВАЛЕННЯ ---
             elif data.startswith("approve_vip_"):
                 target_user_id = int(data.split("_")[2])
                 target_lang = await get_user_lang(target_user_id)
@@ -526,7 +711,6 @@ async def telegram_webhook(request: Request):
                         except ValueError:
                             current_sub_end = None
 
-                    # Якщо підписка ще діє, додаємо 30 днів до залишку; інакше від поточної дати
                     if current_sub_end and current_sub_end > now:
                         new_sub_end = current_sub_end + timedelta(days=30)
                     else:
@@ -570,7 +754,6 @@ async def telegram_webhook(request: Request):
                         except ValueError:
                             current_bot_sub_end = None
 
-                    # Додаємо 30 днів до залишку або від поточної дати
                     if current_bot_sub_end and current_bot_sub_end > now:
                         new_bot_sub_end = current_bot_sub_end + timedelta(days=30)
                     else:
