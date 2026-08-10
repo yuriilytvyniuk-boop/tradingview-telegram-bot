@@ -1,5 +1,5 @@
 fastapi
-uvicorn
-python-telegram-bot
+unicorn
+aiogram
 aiosqlite
 httpx
