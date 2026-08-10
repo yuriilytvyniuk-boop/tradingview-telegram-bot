@@ -482,15 +482,15 @@ async def handle_free_trial_request(user_id: int, username: str, lang: str = "ua
 
 # --- РОЗСИЛКА СИГНАЛІВ НА OKX SIGNAL BOT ---
 
-async def send_signal_to_okx(tokens: list[str], ticker: str, action: str):
+async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, action: str):
     """
-    Функція розсилки сигналів на OKX для списку користувальницьких Signal Token.
+    tokens_info: список кортежів (user_id, username, signal_token)
     """
-    if not tokens:
+    if not tokens_info:
         logger.info("Немає активних підписників Signal Bot для відправки.")
         return
 
-    # Форматування тікера (наприклад BTC -> BTC-USDT-SWAP)
+    # Форматування тікера (наприклад, BTC -> BTC-USDT-SWAP)
     formatted_ticker = ticker.replace("USDT", "").replace("-", "")
     instrument = f"{formatted_ticker}-USDT-SWAP"
 
@@ -506,8 +506,12 @@ async def send_signal_to_okx(tokens: list[str], ticker: str, action: str):
         logger.warning(f"Незрозуміла дія для OKX: {action}")
         return
 
+    success_users = []
+    failed_users = []
+
     async with httpx.AsyncClient(timeout=10.0) as client:
-        for token in tokens:
+        for user_id, username, token in tokens_info:
+            user_disp = f"@{username}" if username and username != "no_username" else f"ID: {user_id}"
             payload = {
                 "signalToken": token,
                 "action": okx_action,
@@ -516,11 +520,36 @@ async def send_signal_to_okx(tokens: list[str], ticker: str, action: str):
             try:
                 response = await client.post(OKX_SIGNAL_WEBHOOK_URL, json=payload)
                 if response.status_code == 200:
-                    logger.info(f"✅ Сигнал успішно відправлено на OKX для токена {token[:8]}...")
+                    logger.info(f"✅ Сигнал відправлено на OKX для {user_disp}")
+                    success_users.append(f"• {user_disp} (`{user_id}`)")
                 else:
-                    logger.error(f"❌ Помилка OKX [{response.status_code}] для токена {token[:8]}...: {response.text}")
+                    logger.error(f"❌ Помилка OKX [{response.status_code}] для {user_disp}: {response.text}")
+                    failed_users.append(f"• {user_disp} (`{user_id}`) — Код: {response.status_code}")
             except Exception as e:
-                logger.error(f"❌ Збій відправки на OKX для токена {token[:8]}...: {e}")
+                logger.error(f"❌ Збій відправки на OKX для {user_disp}: {e}")
+                failed_users.append(f"• {user_disp} (`{user_id}`) — {e}")
+
+    # --- НАДСИЛАННЯ ПРИВАТНОГО ЗВІТУ АДМІНІСТРАТОРУ ---
+    if ADMIN_TELEGRAM_ID and bot:
+        report = f"🤖 **ЗВІТ РОЗСИЛКИ OKX SIGNAL BOT**\n\n"
+        report += f"📊 **Сигнал:** {action.upper()} #{ticker}\n"
+        report += f"🎯 **Дія OKX:** `{okx_action}`\n\n"
+        report += f"✅ **Успішно виконано ({len(success_users)}):**\n"
+        report += ("\n".join(success_users) if success_users else "Немає") + "\n\n"
+        
+        if failed_users:
+            report += f"❌ **Помилки ({len(failed_users)}):**\n"
+            report += "\n".join(failed_users)
+
+        try:
+            await bot.send_message(
+                chat_id=ADMIN_TELEGRAM_ID,
+                text=report,
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.error(f"Не вдалося надіслати звіт адміну: {e}")
+
 
 # --- ВЕБХУК TELEGRAM ---
 
