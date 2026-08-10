@@ -164,8 +164,8 @@ def get_main_keyboard(lang="ua"):
     if lang == "ua":
         keyboard = [
             [InlineKeyboardButton("🎁 Отримати 14 днів FREE", callback_data="btn_free_trial")],
-            [InlineKeyboardButton("📊 Доступ до VIP-групи ($20/міс)", callback_data="btn_buy_group")],
-            [InlineKeyboardButton("🤖 Підключити Signal Bot ($100/міс)", callback_data="btn_connect_bot")],
+            [InlineKeyboardButton("📊 Доступ до VIP-групи ($20 / 30 днів)", callback_data="btn_buy_group")],
+            [InlineKeyboardButton("🤖 Підключити Signal Bot ($100 / 30 днів)", callback_data="btn_connect_bot")],
             [InlineKeyboardButton("💎 Послуги та ціни", callback_data="btn_services")],
             [InlineKeyboardButton("📜 Правила спільноти", callback_data="btn_rules")],
             [InlineKeyboardButton("💬 Чат спільноти", url=PUBLIC_CHAT_LINK)],
@@ -174,8 +174,8 @@ def get_main_keyboard(lang="ua"):
     else:
         keyboard = [
             [InlineKeyboardButton("🎁 Get 14-Day Free Trial", callback_data="btn_free_trial")],
-            [InlineKeyboardButton("📊 VIP Signals Group Access ($20/mo)", callback_data="btn_buy_group")],
-            [InlineKeyboardButton("🤖 Connect Signal Bot ($100/mo)", callback_data="btn_connect_bot")],
+            [InlineKeyboardButton("📊 VIP Signals Group Access ($20 / 30 days)", callback_data="btn_buy_group")],
+            [InlineKeyboardButton("🤖 Connect Signal Bot ($100 / 30 days)", callback_data="btn_connect_bot")],
             [InlineKeyboardButton("💎 Services & Pricing", callback_data="btn_services")],
             [InlineKeyboardButton("📜 Community Rules", callback_data="btn_rules")],
             [InlineKeyboardButton("💬 Community Chat", url=PUBLIC_CHAT_LINK)],
@@ -198,8 +198,8 @@ def get_text_start(lang="ua"):
             "• 🚀 **14 днів FREE-доступу:** Кожен новий користувач отримує 2 тижні безкоштовного тестового доступу до VIP-групи Kerdos!\n"
             "• 👥 **Реферальна програма «Приведи друга»:** За кожного друга, який придбає підписку — отримуй **+14 днів безкоштовного доступу**!\n\n"
             "💎 **Наші Послуги та Прайс:**\n"
-            "• 📊 **VIP-група з сигналами Kerdos:** **$20 / місяць** *(Аналітика ринку, торгові сигнали та чат спільноти)*\n"
-            "• 🤖 **Персональний Signal Bot:** **$100 / місяць** *(Автоматичне підключення вашого акаунту OKX для миттєвої торгівлі)*\n\n"
+            "• 📊 **VIP-група з сигналами Kerdos:** **$20 / 30 днів** *(Аналітика ринку, торгові сигнали та чат спільноти)*\n"
+            "• 🤖 **Персональний Signal Bot:** **$100 / 30 днів** *(Автоматичне підключення вашого акаунту OKX для миттєвої торгівлі)*\n\n"
             "📜 **Правила спільноти:**\n"
             "• 🚫 Без спаму, флуду, реклами та реферальних посилань.\n"
             "• 🤝 Ввічливе спілкування, без мату та токсичності.\n"
@@ -213,8 +213,8 @@ def get_text_start(lang="ua"):
         "• 🚀 **14-Day FREE Trial:** Every new user gets 2 weeks of free trial access to our Kerdos VIP Signals Group!\n"
         "• 👥 **\"Refer a Friend\" Program:** Bring a friend, and once they subscribe, get **+14 days of free VIP access**!\n\n"
         "💎 **Services & Pricing:**\n"
-        "• 📊 **Kerdos VIP Signals Group:** **$20 / month** *(Market analytics, trade signals, and community access)*\n"
-        "• 🤖 **Personal Signal Bot Setup:** **$100 / month** *(Direct OKX bot connection for automated signal execution)*\n\n"
+        "• 📊 **Kerdos VIP Signals Group:** **$20 / 30 days** *(Market analytics, trade signals, and community access)*\n"
+        "• 🤖 **Personal Signal Bot Setup:** **$100 / 30 days** *(Direct OKX bot connection for automated signal execution)*\n\n"
         "📜 **Community Rules:**\n"
         "• 🚫 No spam, flooding, self-promotion, or referral links.\n"
         "• 🤝 Respectful communication, no profanity or toxicity.\n"
@@ -225,7 +225,7 @@ def get_text_start(lang="ua"):
 def get_text_vip_payment(lang="ua"):
     if lang == "ua":
         return (
-            "💳 **Оплата підписки на VIP-групу Kerdos ($20 / місяць)**\n\n"
+            "💳 **Оплата підписки на VIP-групу Kerdos ($20 / 30 днів)**\n\n"
             "Для активації підписки перекажіть **20 USDT** на один із гаманців Binance нижче:\n\n"
             f"🔸 **USDT (TRC20):**\n`{WALLET_USDT_TRC20}`\n\n"
             f"🔹 **USDT (BEP20 / BNB Chain):**\n`{WALLET_USDT_BEP20}`\n\n"
@@ -236,7 +236,7 @@ def get_text_vip_payment(lang="ua"):
             "Я (Mireya) передам її адміністратору на перевірку, і доступ буде надано!"
         )
     return (
-        "💳 **Kerdos VIP Group Subscription ($20 / month)**\n\n"
+        "💳 **Kerdos VIP Group Subscription ($20 / 30 days)**\n\n"
         "To activate your subscription, send **20 USDT** to one of the Binance wallets below:\n\n"
         f"🔸 **USDT (TRC20):**\n`{WALLET_USDT_TRC20}`\n\n"
         f"🔹 **USDT (BEP20 / BNB Chain):**\n`{WALLET_USDT_BEP20}`\n\n"
@@ -250,13 +250,13 @@ def get_text_vip_payment(lang="ua"):
 def get_text_bot_payment(lang="ua"):
     if lang == "ua":
         return (
-            "🤖 **Підключення Kerdos Signal Bot ($100 / місяць)**\n\n"
+            "🤖 **Підключення Kerdos Signal Bot ($100 / 30 днів)**\n\n"
             "Персональний бот для автоматичного виконання сигналів **Kerdos** на вашому акаунті OKX.\n\n"
             "⚡ **Переваги:**\n"
             "• Автоматичне відкриття/закриття угод 24/7\n"
             "• Без передачі API-ключів (безпечно через Signal Token)\n"
             "• Миттєва швидкість виконання сигналів\n\n"
-            "💳 **Вартість:** **$100 / місяць**\n\n"
+            "💳 **Вартість:** **$100 / 30 днів**\n\n"
             "Перекажіть **100 USDT** на один із гаманців Binance:\n\n"
             f"🔸 **USDT (TRC20):**\n`{WALLET_USDT_TRC20}`\n\n"
             f"🔹 **USDT (BEP20 / BNB Chain):**\n`{WALLET_USDT_BEP20}`\n\n"
@@ -265,13 +265,13 @@ def get_text_bot_payment(lang="ua"):
             "Після переказу **надішліть квитанцію (скріншот або хеш) сюди в чат**."
         )
     return (
-        "🤖 **Connect Kerdos Signal Bot ($100 / month)**\n\n"
+        "🤖 **Connect Kerdos Signal Bot ($100 / 30 days)**\n\n"
         "Automated bot for executing **Kerdos** signals directly on your OKX account.\n\n"
         "⚡ **Benefits:**\n"
         "• 24/7 automated trade execution\n"
         "• Safe setup without sharing API keys (via Signal Token)\n"
         "• Instant signal execution speed\n\n"
-        "💳 **Price:** **$100 / month**\n\n"
+        "💳 **Price:** **$100 / 30 days**\n\n"
         "Send **100 USDT** to one of the Binance wallets below:\n\n"
         f"🔸 **USDT (TRC20):**\n`{WALLET_USDT_TRC20}`\n\n"
         f"🔹 **USDT (BEP20 / BNB Chain):**\n`{WALLET_USDT_BEP20}`\n\n"
@@ -284,16 +284,16 @@ def get_text_services(lang="ua"):
     if lang == "ua":
         return (
             "💎 **Наші Послуги та Прайс (Kerdos)**\n\n"
-            "📊 **VIP-група з сигналами:** **$20 / місяць**\n\n"
-            "🤖 **Персональний Signal Bot:** **$100 / місяць**\n\n"
+            "📊 **VIP-група з сигналами:** **$20 / 30 днів**\n\n"
+            "🤖 **Персональний Signal Bot:** **$100 / 30 днів**\n\n"
             "🎁 **Бонуси:**\n"
             "• **14 днів FREE** для нових користувачів!\n"
             "• **+14 днів** за кожного друга, який придбає підписку!"
         )
     return (
         "💎 **Services & Pricing (Kerdos)**\n\n"
-        "📊 **VIP Signals Group Access:** **$20 / month**\n\n"
-        "🤖 **Personal Signal Bot Setup:** **$100 / month**\n\n"
+        "📊 **VIP Signals Group Access:** **$20 / 30 days**\n\n"
+        "🤖 **Personal Signal Bot Setup:** **$100 / 30 days**\n\n"
         "🎁 **Bonuses:**\n"
         "• **14-Day FREE Trial** for new users!\n"
         "• **+14 Days Free Access** for every referred friend who subscribes!"
@@ -497,12 +497,33 @@ async def telegram_webhook(request: Request):
                 user_lang = await get_user_lang(user_id)
                 await bot.send_message(chat_id=chat_id, text=get_text_bot_payment(user_lang), reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
 
-            # --- АДМІН СХВАЛЕННЯ ---
+            # --- АДМІН СХВАЛЕННЯ З ДОДАВАННЯМ ЗАЛИШКУ ДНІВ ---
             elif data.startswith("approve_vip_"):
                 target_user_id = int(data.split("_")[2])
                 target_lang = await get_user_lang(target_user_id)
                 now = datetime.now(timezone.utc)
-                sub_end = now + timedelta(days=30)
+
+                async with aiosqlite.connect(DB_PATH) as db:
+                    async with db.execute("SELECT sub_end FROM users WHERE user_id = ?", (target_user_id,)) as cursor:
+                        row = await cursor.fetchone()
+
+                    current_sub_end = None
+                    if row and row[0]:
+                        try:
+                            current_sub_end = datetime.fromisoformat(row[0])
+                            if current_sub_end.tzinfo is None:
+                                current_sub_end = current_sub_end.replace(tzinfo=timezone.utc)
+                        except ValueError:
+                            current_sub_end = None
+
+                    # Якщо підписка ще діє, додаємо 30 днів до залишку; інакше від поточної дати
+                    if current_sub_end and current_sub_end > now:
+                        new_sub_end = current_sub_end + timedelta(days=30)
+                    else:
+                        new_sub_end = now + timedelta(days=30)
+
+                    await db.execute("UPDATE users SET status = 'active', sub_end = ? WHERE user_id = ?", (new_sub_end.isoformat(), target_user_id))
+                    await db.commit()
 
                 invite_link = await bot.create_chat_invite_link(
                     chat_id=TELEGRAM_CHANNEL_ID,
@@ -510,15 +531,13 @@ async def telegram_webhook(request: Request):
                     expire_date=int((now + timedelta(hours=48)).timestamp())
                 )
 
-                async with aiosqlite.connect(DB_PATH) as db:
-                    await db.execute("UPDATE users SET status = 'active', sub_end = ? WHERE user_id = ?", (sub_end.isoformat(), target_user_id))
-                    await db.commit()
-
                 approval_msg = (
                     f"🎉 **Вашу оплату VIP-групи Kerdos підтверджено!**\n\n"
+                    f"⏰ Новий термін підписки активний до: **{new_sub_end.strftime('%Y-%m-%d %H:%M UTC')}**\n\n"
                     f"🔗 **Посилання для входу:**\n{invite_link.invite_link}"
                     if target_lang == "ua" else
                     f"🎉 **Your Kerdos VIP subscription has been approved!**\n\n"
+                    f"⏰ New expiration date: **{new_sub_end.strftime('%Y-%m-%d %H:%M UTC')}**\n\n"
                     f"🔗 **Your invite link:**\n{invite_link.invite_link}"
                 )
                 await bot.send_message(chat_id=target_user_id, text=approval_msg, parse_mode="Markdown")
@@ -527,10 +546,27 @@ async def telegram_webhook(request: Request):
                 target_user_id = int(data.split("_")[2])
                 target_lang = await get_user_lang(target_user_id)
                 now = datetime.now(timezone.utc)
-                bot_sub_end = now + timedelta(days=30)
 
                 async with aiosqlite.connect(DB_PATH) as db:
-                    await db.execute("UPDATE users SET bot_sub_end = ? WHERE user_id = ?", (bot_sub_end.isoformat(), target_user_id))
+                    async with db.execute("SELECT bot_sub_end FROM users WHERE user_id = ?", (target_user_id,)) as cursor:
+                        row = await cursor.fetchone()
+
+                    current_bot_sub_end = None
+                    if row and row[0]:
+                        try:
+                            current_bot_sub_end = datetime.fromisoformat(row[0])
+                            if current_bot_sub_end.tzinfo is None:
+                                current_bot_sub_end = current_bot_sub_end.replace(tzinfo=timezone.utc)
+                        except ValueError:
+                            current_bot_sub_end = None
+
+                    # Додаємо 30 днів до залишку або від поточної дати
+                    if current_bot_sub_end and current_bot_sub_end > now:
+                        new_bot_sub_end = current_bot_sub_end + timedelta(days=30)
+                    else:
+                        new_bot_sub_end = now + timedelta(days=30)
+
+                    await db.execute("UPDATE users SET bot_sub_end = ? WHERE user_id = ?", (new_bot_sub_end.isoformat(), target_user_id))
                     await db.commit()
 
                 await bot.send_message(chat_id=target_user_id, text=get_text_okx_instruction(target_lang), parse_mode="Markdown")
