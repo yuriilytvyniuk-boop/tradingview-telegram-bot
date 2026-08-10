@@ -689,19 +689,19 @@ async def telegram_webhook(request: Request):
 
                 async with aiosqlite.connect(DB_PATH) as db:
                     async with db.execute(
-                        "SELECT status, trial_end, sub_end, bot_sub_end FROM users WHERE user_id = ?", 
+                        "SELECT status, trial_end, sub_end, bot_sub_end, trial_used FROM users WHERE user_id = ?", 
                         (user_id,)
                     ) as cursor:
                         row = await cursor.fetchone()
 
                 if not row:
                     sub_info = (
-                        "ℹ️ **У вас немає активних підписок.**\n\nВи можете активувати 14 днів FREE або придбати доступ у меню."
+                        "ℹ️ **У вас немає активних підписок.**\n\nВи можете активувати **14 днів FREE** у меню!"
                         if user_lang == "ua" else
-                        "ℹ️ **You don't have any active subscriptions.**\n\nYou can claim your 14-day FREE trial or buy a subscription in the main menu."
+                        "ℹ️ **You don't have any active subscriptions.**\n\nYou can claim your **14-day FREE trial** in the menu!"
                     )
                 else:
-                    status, trial_end, sub_end, bot_sub_end = row
+                    status, trial_end, sub_end, bot_sub_end, trial_used = row
                     lines = []
 
                     def parse_dt(dt_str):
@@ -719,8 +719,11 @@ async def telegram_webhook(request: Request):
                     dt_sub = parse_dt(sub_end)
                     dt_bot = parse_dt(bot_sub_end)
 
+                    has_active = False
+
                     # VIP-група або Trial
                     if status == 'trial' and dt_trial and dt_trial > now:
+                        has_active = True
                         days_left = (dt_trial - now).days
                         hours_left = int((dt_trial - now).seconds / 3600)
                         lines.append(
@@ -729,6 +732,7 @@ async def telegram_webhook(request: Request):
                             f"🎁 **Free Trial (VIP):** **{days_left}d {hours_left}h** remaining\n*(valid until {dt_trial.strftime('%Y-%m-%d %H:%M UTC')})*"
                         )
                     elif dt_sub and dt_sub > now:
+                        has_active = True
                         days_left = (dt_sub - now).days
                         hours_left = int((dt_sub - now).seconds / 3600)
                         lines.append(
@@ -736,15 +740,10 @@ async def telegram_webhook(request: Request):
                             if user_lang == "ua" else
                             f"📊 **Kerdos VIP Group:** **{days_left}d {hours_left}h** remaining\n*(valid until {dt_sub.strftime('%Y-%m-%d %H:%M UTC')})*"
                         )
-                    else:
-                        lines.append(
-                            "📊 **VIP-група:** підписка неактивна або закінчилася"
-                            if user_lang == "ua" else
-                            "📊 **VIP Group:** Subscription is inactive or expired"
-                        )
 
                     # Signal Bot
                     if dt_bot and dt_bot > now:
+                        has_active = True
                         days_left = (dt_bot - now).days
                         hours_left = int((dt_bot - now).seconds / 3600)
                         lines.append(
@@ -752,15 +751,23 @@ async def telegram_webhook(request: Request):
                             if user_lang == "ua" else
                             f"🤖 **Signal Bot:** **{days_left}d {hours_left}h** remaining\n*(valid until {dt_bot.strftime('%Y-%m-%d %H:%M UTC')})*"
                         )
-                    else:
-                        lines.append(
-                            "🤖 **Signal Bot:** не підключено"
-                            if user_lang == "ua" else
-                            "🤖 **Signal Bot:** Not connected"
-                        )
 
-                    header = "⏳ **Інформація про ваші підписки:**\n\n" if user_lang == "ua" else "⏳ **Your Subscription Status:**\n\n"
-                    sub_info = header + "\n\n".join(lines)
+                    if has_active:
+                        header = "⏳ **Інформація про ваші підписки:**\n\n" if user_lang == "ua" else "⏳ **Your Subscription Status:**\n\n"
+                        sub_info = header + "\n\n".join(lines)
+                    else:
+                        if trial_used == 1:
+                            sub_info = (
+                                "ℹ️ **У вас немає активних підписок.**\n\nВаш безкоштовний 14-денний період **вичерпано**. Для продовження доступу виберіть тариф у меню."
+                                if user_lang == "ua" else
+                                "ℹ️ **You don't have any active subscriptions.**\n\nYour 14-day free trial has been used. Please select a plan from the menu to continue."
+                            )
+                        else:
+                            sub_info = (
+                                "ℹ️ **У вас немає активних підписок.**\n\nВи можете активувати **14 днів FREE** або придбати доступ у меню."
+                                if user_lang == "ua" else
+                                "ℹ️ **You don't have any active subscriptions.**\n\nYou can claim your **14-day FREE trial** or buy a subscription in the main menu."
+                            )
 
                 await bot.send_message(chat_id=chat_id, text=sub_info, reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
 
