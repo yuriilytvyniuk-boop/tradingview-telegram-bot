@@ -7,16 +7,21 @@ from fastapi import FastAPI, Request
 import telegram
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 import aiosqlite
+import httpx  # Для відправки сигналів на OKX
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# --- ЗМІННІ ОТОЧЕННЯ ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")  # ID VIP-групи
 ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))  # ID адміна
 
 # 🔗 Посилання на загальну групу спілкування
 PUBLIC_CHAT_LINK = os.getenv("PUBLIC_CHAT_LINK", "https://t.me/kerdos_group")
+
+# Endpoint OKX для прийому сигналів бота
+OKX_SIGNAL_WEBHOOK_URL = "https://www.okx.com/priapi/v5/rubik/stat/trading-bot/signal/generic"
 
 DB_PATH = "trades.db"
 
@@ -120,7 +125,7 @@ async def check_expired_trials():
                     except Exception as e:
                         logger.error(f"Failed to remove expired user {user_id}: {e}")
 
-                # 2. Завершення платній підписки
+                # 2. Завершення платній підписки на VIP-групу
                 async with db.execute(
                     "SELECT user_id, username, lang FROM users WHERE status = 'active' AND sub_end <= ?",
                     (now.isoformat(),)
@@ -417,7 +422,7 @@ async def handle_free_trial_request(user_id: int, username: str, lang: str = "ua
             """, (user_id, username, now.isoformat(), trial_end.isoformat(), lang))
             await db.commit()
 
-            # --- АВТОМАТИЧНЕ НАРАХУВАННЯ БОНУСУ ЗАПРОШУЮЧОМУ ---
+            # --- АВТОМАТИЧНЕ НАРАХУВАННЯ БОНУСУ ZAПРОШУЮЧОМУ ---
             if referrer_id:
                 async with db.execute("SELECT trial_end, sub_end, status, lang FROM users WHERE user_id = ?", (referrer_id,)) as cursor:
                     ref_user = await cursor.fetchone()
@@ -426,7 +431,6 @@ async def handle_free_trial_request(user_id: int, username: str, lang: str = "ua
                     ref_trial_end, ref_sub_end, ref_status, ref_lang = ref_user
                     ref_lang = ref_lang or "ua"
 
-                    # 1. Якщо у запрошуючого діє платна підписка
                     if ref_status == 'active' and ref_sub_end:
                         curr_end = datetime.fromisoformat(ref_sub_end)
                         if curr_end.tzinfo is None:
@@ -434,8 +438,6 @@ async def handle_free_trial_request(user_id: int, username: str, lang: str = "ua
                         base_time = max(now, curr_end)
                         new_end = base_time + timedelta(days=14)
                         await db.execute("UPDATE users SET sub_end = ? WHERE user_id = ?", (new_end.isoformat(), referrer_id))
-
-                    # 2. Якщо у нього діє або був триал
                     else:
                         curr_end = None
                         if ref_trial_end:
@@ -449,7 +451,6 @@ async def handle_free_trial_request(user_id: int, username: str, lang: str = "ua
 
                     await db.commit()
 
-                    # Повідомляємо запрошуючого про бонус
                     bonus_msg = (
                         f"🥳 **Ваш друг (@{username}) взяв безкоштовний тестовий період!**\n\n"
                         f"🎁 Вам автоматично нараховано **+14 днів безкоштовного доступу** до Kerdos VIP!\n"
@@ -479,6 +480,48 @@ async def handle_free_trial_request(user_id: int, username: str, lang: str = "ua
             logger.error(f"Error creating invite link for user {user_id}: {e}")
             return "❌ Помилка при створенні посилання. Переконайся, що Mireya додана у групу як адмін."
 
+# --- РОЗСИЛКА СИГНАЛІВ НА OKX SIGNAL BOT ---
+
+async def send_signal_to_okx(tokens: list[str], ticker: str, action: str):
+    """
+    Функція розсилки сигналів на OKX для списку користувальницьких Signal Token.
+    """
+    if not tokens:
+        logger.info("Немає активних підписників Signal Bot для відправки.")
+        return
+
+    # Форматування тікера (наприклад BTC -> BTC-USDT-SWAP)
+    formatted_ticker = ticker.replace("USDT", "").replace("-", "")
+    instrument = f"{formatted_ticker}-USDT-SWAP"
+
+    okx_action = None
+    if action in ["buy", "long"]:
+        okx_action = "enter_long"
+    elif action in ["sell", "short"]:
+        okx_action = "enter_short"
+    elif action in ["close", "exit"]:
+        okx_action = "exit_long"
+
+    if not okx_action:
+        logger.warning(f"Незрозуміла дія для OKX: {action}")
+        return
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for token in tokens:
+            payload = {
+                "signalToken": token,
+                "action": okx_action,
+                "instrument": instrument
+            }
+            try:
+                response = await client.post(OKX_SIGNAL_WEBHOOK_URL, json=payload)
+                if response.status_code == 200:
+                    logger.info(f"✅ Сигнал успішно відправлено на OKX для токена {token[:8]}...")
+                else:
+                    logger.error(f"❌ Помилка OKX [{response.status_code}] для токена {token[:8]}...: {response.text}")
+            except Exception as e:
+                logger.error(f"❌ Збій відправки на OKX для токена {token[:8]}...: {e}")
+
 # --- ВЕБХУК TELEGRAM ---
 
 @app.post("/telegram_webhook")
@@ -496,7 +539,7 @@ async def telegram_webhook(request: Request):
             username = update.message.from_user.username or "no_username"
             user_lang = await get_user_lang(user_id)
 
-            # Перевірка на надсилання Signal Token (наприклад: Token: abc123xyz)
+            # Обробка введення Signal Token (формат Token: xxx)
             if update.message.text and update.message.text.strip().lower().startswith("token:"):
                 raw_token = update.message.text.strip().split(":", 1)[1].strip()
                 async with aiosqlite.connect(DB_PATH) as db:
@@ -511,7 +554,7 @@ async def telegram_webhook(request: Request):
                 await bot.send_message(chat_id=chat_id, text=success_text, parse_mode="Markdown")
                 return {"status": "ok"}
 
-            # Текстові команди та реферальний старт (/start ref_123456)
+            # Команди та рефералка
             if update.message.text:
                 text = update.message.text.strip()
                 if text.startswith("/start"):
@@ -541,7 +584,7 @@ async def telegram_webhook(request: Request):
                     await bot.send_message(chat_id=chat_id, text=get_text_rules(user_lang), reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
                     return {"status": "ok"}
 
-            # Прийом квитанції від користувача
+            # Прийом квитанцій
             if ADMIN_TELEGRAM_ID and user_id != ADMIN_TELEGRAM_ID:
                 admin_keyboard = InlineKeyboardMarkup([
                     [
@@ -610,7 +653,7 @@ async def telegram_webhook(request: Request):
                 user_lang = await get_user_lang(user_id)
                 await bot.send_message(chat_id=chat_id, text=get_text_bot_payment(user_lang), reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
 
-            # --- ПЕРЕВІРКА ТЕРМІНУ ДІЇ ПІДПИСКИ ---
+            # Перевірка статусу підписки
             elif data == "btn_my_sub":
                 user_lang = await get_user_lang(user_id)
                 now = datetime.now(timezone.utc)
@@ -647,7 +690,7 @@ async def telegram_webhook(request: Request):
                     dt_sub = parse_dt(sub_end)
                     dt_bot = parse_dt(bot_sub_end)
 
-                    # 1. VIP-група або Trial
+                    # VIP-група або Trial
                     if status == 'trial' and dt_trial and dt_trial > now:
                         days_left = (dt_trial - now).days
                         hours_left = int((dt_trial - now).seconds / 3600)
@@ -671,7 +714,7 @@ async def telegram_webhook(request: Request):
                             "📊 **VIP Group:** Subscription is inactive or expired"
                         )
 
-                    # 2. Signal Bot
+                    # Signal Bot
                     if dt_bot and dt_bot > now:
                         days_left = (dt_bot - now).days
                         hours_left = int((dt_bot - now).seconds / 3600)
@@ -692,7 +735,7 @@ async def telegram_webhook(request: Request):
 
                 await bot.send_message(chat_id=chat_id, text=sub_info, reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
 
-            # --- АДМІН СХВАЛЕННЯ ---
+            # Підтвердження адміна
             elif data.startswith("approve_vip_"):
                 target_user_id = int(data.split("_")[2])
                 target_lang = await get_user_lang(target_user_id)
@@ -779,7 +822,7 @@ async def telegram_webhook(request: Request):
         logger.error(f"Error handling Telegram webhook: {e}")
         return {"status": "error", "message": str(e)}
 
-# --- TRADINGVIEW WEBHOOK (СИГНАЛИ ВІД KERDOS) ---
+# --- TRADINGVIEW WEBHOOK (ОБРОБКА СИГНАЛІВ ТА АВТО-ТРЕЙДИНГ) ---
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -800,11 +843,26 @@ async def webhook(request: Request):
         now = datetime.now(timezone.utc)
         message_text = ""
 
+        # 1. Пошук активних токенів у базі
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute(
+                "SELECT signal_token FROM users WHERE bot_sub_end > ? AND signal_token IS NOT NULL AND signal_token != ''",
+                (now.isoformat(),)
+            ) as cursor:
+                active_tokens_rows = await cursor.fetchall()
+                active_tokens = [row[0] for row in active_tokens_rows]
+
+        # 2. Розсилка сигналу на OKX у фоні
+        if active_tokens:
+            asyncio.create_task(send_signal_to_okx(active_tokens, ticker, action))
+
+        # 3. Публікація в Telegram канал
         if action in ["buy", "long"]:
             message_text = (
                 f"🚀 **KERDOS SIGNAL: ENTRY LONG**\n\n"
                 f"🪙 **Asset:** #{ticker}\n"
                 f"💵 **Entry Price:** {price:.4f}\n"
+                f"🤖 **Auto-traded via OKX:** {len(active_tokens)} bot(s)\n"
                 f"⏰ **Time:** {now.strftime('%Y-%m-%d %H:%M UTC')}"
             )
         elif action in ["sell", "short"]:
@@ -812,6 +870,7 @@ async def webhook(request: Request):
                 f"🔻 **KERDOS SIGNAL: ENTRY SHORT**\n\n"
                 f"🪙 **Asset:** #{ticker}\n"
                 f"💵 **Entry Price:** {price:.4f}\n"
+                f"🤖 **Auto-traded via OKX:** {len(active_tokens)} bot(s)\n"
                 f"⏰ **Time:** {now.strftime('%Y-%m-%d %H:%M UTC')}"
             )
         elif action in ["close", "exit"] or entry_price != 0:
@@ -843,7 +902,7 @@ async def webhook(request: Request):
                 parse_mode="Markdown"
             )
 
-        return {"status": "ok"}
+        return {"status": "ok", "sent_to_okx_bots": len(active_tokens)}
     except Exception as e:
         logger.error(f"Error processing webhook: {e}")
         return {"status": "error", "message": str(e)}
