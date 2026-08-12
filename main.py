@@ -582,7 +582,15 @@ async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, action: str)
     success_users = []
     failed_users = []
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+        # 1. Додаємо заголовки під звичайний браузер
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+    }
+
+    async with httpx.AsyncClient(headers=headers, timeout=10.0) as client:
+
         for user_id, username, token in tokens_info:
             user_disp = f"@{username}" if username and username != "no_username" else f"ID: {user_id}"
             payload = {
