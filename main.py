@@ -21,7 +21,7 @@ ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))  # ID адміна
 PUBLIC_CHAT_LINK = os.getenv("PUBLIC_CHAT_LINK", "https://t.me/kerdos_group")
 
 # Endpoint OKX для прийому сигналів бота
-OKX_SIGNAL_WEBHOOK_URL = "https://www.okx.com/priapi/v5/rubik/stat/trading-bot/signal/generic"
+OKX_SIGNAL_WEBHOOK_URL = "https://www.okx.com/algo/signal/trigger"
 
 DB_PATH = "trades.db"
 
