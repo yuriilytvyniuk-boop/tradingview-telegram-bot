@@ -21,7 +21,7 @@ ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))  # ID адміна
 PUBLIC_CHAT_LINK = os.getenv("PUBLIC_CHAT_LINK", "https://t.me/kerdos_group")
 
 # Endpoint OKX для прийому сигналів бота
-OKX_SIGNAL_WEBHOOK_URL = "https://www.okx.com/algo/signal/trigger"
+OKX_SIGNAL_WEBHOOK_URL = "https://yellow-morning-392e.shy-scene-60c3.workers.dev"
 
 DB_PATH = "trades.db"
 
