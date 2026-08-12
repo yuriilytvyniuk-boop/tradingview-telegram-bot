@@ -234,6 +234,26 @@ def get_admin_panel_keyboard():
     ])
 # =======================================================
 
+# =======================================================
+# БЛОК ДОДАНОГО ФУНКЦІОНАЛУ: ПІДРАХУНОК ДНІВ, ЩО ЗАЛИШИЛИСЬ
+# =======================================================
+def calc_days_left(end_iso: str) -> int:
+    """Повертає кількість повних днів, що залишились до end_iso (0, якщо термін минув)."""
+    try:
+        end_dt = datetime.fromisoformat(end_iso)
+        if end_dt.tzinfo is None:
+            end_dt = end_dt.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        delta = end_dt - now
+        if delta.total_seconds() <= 0:
+            return 0
+        # Округлюємо вгору, щоб "залишилось менше доби" не показувало 0
+        days = delta.days + (1 if delta.seconds > 0 or delta.microseconds > 0 else 0)
+        return max(days, 0)
+    except Exception:
+        return 0
+# =======================================================
+
 # --- ТЕКСТИ ПОВІДОМЛЕНЬ ---
 
 def get_text_start(lang="ua"):
@@ -689,7 +709,7 @@ async def telegram_webhook(request: Request):
                         
                         async with aiosqlite.connect(DB_PATH) as db:
                             await db.execute(
-                                "UPDATE users SET status = 'vip', sub_end = ? WHERE user_id = ?", 
+                                "UPDATE users SET status = 'VIP', sub_end = ? WHERE user_id = ?", 
                                 (new_end.isoformat(), target_user_id)
                             )
                             await db.commit()
@@ -728,7 +748,7 @@ async def telegram_webhook(request: Request):
                         
                         async with aiosqlite.connect(DB_PATH) as db:
                             await db.execute(
-                                "UPDATE users SET status = 'bot', bot_sub_end = ? WHERE user_id = ?", 
+                                "UPDATE users SET status = 'BOT', bot_sub_end = ? WHERE user_id = ?", 
                                 (new_end.isoformat(), target_user_id)
                             )
                             await db.commit()
@@ -902,11 +922,36 @@ async def telegram_webhook(request: Request):
                     sub_info = "У вас немає активних підписок." if user_lang == "ua" else "You have no active subscriptions."
                 else:
                     status, t_end, s_end, b_end, token = row
-                    sub_info = f"📊 **Статус:** `{status.upper()}`\n\n"
-                    if t_end: sub_info += f"🎁 **Триал до:** {t_end[:16].replace('T', ' ')} UTC\n"
-                    if s_end: sub_info += f"💎 **VIP-група до:** {s_end[:16].replace('T', ' ')} UTC\n"
-                    if b_end: sub_info += f"🤖 **Signal Bot до:** {b_end[:16].replace('T', ' ')} UTC\n"
-                    if token: sub_info += f"🔑 **OKX Token:** `{token[:6]}...{token[-4:]}`"
+                    status_label = status.upper() if status else "FREE"
+                    sub_info = (
+                        f"📊 **Статус:** `{status_label}`\n\n"
+                        if user_lang == "ua" else
+                        f"📊 **Status:** `{status_label}`\n\n"
+                    )
+
+                    if t_end:
+                        days_left = calc_days_left(t_end)
+                        if user_lang == "ua":
+                            sub_info += f"🎁 **Триал:** залишилось {days_left} дн. (до {t_end[:16].replace('T', ' ')} UTC)\n"
+                        else:
+                            sub_info += f"🎁 **Trial:** {days_left} days left (until {t_end[:16].replace('T', ' ')} UTC)\n"
+
+                    if s_end:
+                        days_left = calc_days_left(s_end)
+                        if user_lang == "ua":
+                            sub_info += f"💎 **VIP-група:** залишилось {days_left} дн. (до {s_end[:16].replace('T', ' ')} UTC)\n"
+                        else:
+                            sub_info += f"💎 **VIP Group:** {days_left} days left (until {s_end[:16].replace('T', ' ')} UTC)\n"
+
+                    if b_end:
+                        days_left = calc_days_left(b_end)
+                        if user_lang == "ua":
+                            sub_info += f"🤖 **Signal Bot:** залишилось {days_left} дн. (до {b_end[:16].replace('T', ' ')} UTC)\n"
+                        else:
+                            sub_info += f"🤖 **Signal Bot:** {days_left} days left (until {b_end[:16].replace('T', ' ')} UTC)\n"
+
+                    if token:
+                        sub_info += f"🔑 **OKX Token:** `{token[:6]}...{token[-4:]}`"
 
                 await query.edit_message_text(text=sub_info, reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
 
@@ -943,25 +988,32 @@ async def telegram_webhook(request: Request):
                                 try:
                                     t_dt = datetime.fromisoformat(t_end)
                                     if t_dt.tzinfo is None: t_dt = t_dt.replace(tzinfo=timezone.utc)
-                                    if t_dt > now_utc: services.append(f"⏳ Тріал до {t_dt.strftime('%d.%m')}")
+                                    if t_dt > now_utc:
+                                        days_left = calc_days_left(t_end)
+                                        services.append(f"⏳ Тріал: {days_left} дн. (до {t_dt.strftime('%d.%m')})")
                                 except Exception: pass
                                     
                             if s_end:
                                 try:
                                     s_dt = datetime.fromisoformat(s_end)
                                     if s_dt.tzinfo is None: s_dt = s_dt.replace(tzinfo=timezone.utc)
-                                    if s_dt > now_utc: services.append(f"💎 VIP до {s_dt.strftime('%d.%m')}")
+                                    if s_dt > now_utc:
+                                        days_left = calc_days_left(s_end)
+                                        services.append(f"💎 VIP: {days_left} дн. (до {s_dt.strftime('%d.%m')})")
                                 except Exception: pass
                                     
                             if b_end:
                                 try:
                                     b_dt = datetime.fromisoformat(b_end)
                                     if b_dt.tzinfo is None: b_dt = b_dt.replace(tzinfo=timezone.utc)
-                                    if b_dt > now_utc: services.append(f"🤖 Бот до {b_dt.strftime('%d.%m')}")
+                                    if b_dt > now_utc:
+                                        days_left = calc_days_left(b_end)
+                                        services.append(f"🤖 Bot: {days_left} дн. (до {b_dt.strftime('%d.%m')})")
                                 except Exception: pass
                                     
-                            services_str = " | ".join(services) if services else f"Статус: `{u_status}`"
-                            text += f"👤 {u_name_disp}\n└ {services_str}\n\n"
+                            services_str = " | ".join(services) if services else "немає активних послуг"
+                            status_disp = u_status.upper() if u_status else "FREE"
+                            text += f"👤 {u_name_disp} — Статус: `{status_disp}`\n└ {services_str}\n\n"
                     
                     await query.edit_message_text(text=text, reply_markup=get_admin_panel_keyboard(), parse_mode="Markdown")
                 
