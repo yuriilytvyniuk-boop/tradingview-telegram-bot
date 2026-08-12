@@ -21,7 +21,7 @@ ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))  # ID адміна
 PUBLIC_CHAT_LINK = os.getenv("PUBLIC_CHAT_LINK", "https://t.me/kerdos_group")
 
 # Endpoint OKX для прийому сигналів бота
-OKX_SIGNAL_WEBHOOK_URL = "https://www.okx.com/algo/signal/trigger"
+OKX_SIGNAL_WEBHOOK_URL = "https://www.okx.com/priapi/v5/rubik/stat/trading-bot/signal/generic"
 
 DB_PATH = "trades.db"
 
@@ -582,15 +582,7 @@ async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, action: str)
     success_users = []
     failed_users = []
 
-        # 1. Додаємо заголовки під звичайний браузер
-    headers = {
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json"
-    }
-
-    async with httpx.AsyncClient(headers=headers, timeout=10.0) as client:
-
+    async with httpx.AsyncClient(timeout=10.0) as client:
         for user_id, username, token in tokens_info:
             user_disp = f"@{username}" if username and username != "no_username" else f"ID: {user_id}"
             payload = {
