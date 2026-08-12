@@ -19,6 +19,10 @@ VIP_CHANNEL_ID = os.getenv("VIP_CHANNEL_ID")
 ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", 0)) if os.getenv("ADMIN_TELEGRAM_ID") else None
 DB_PATH = os.getenv("DB_PATH", "trades.db")
 
+# Реквізити для оплати (можна змінити за потреби)
+USDT_TRC20_WALLET = os.getenv("USDT_TRC20_WALLET", "ТВОЙ_USDT_TRC20_КОШЕЛЬОК")
+USDT_BEP20_WALLET = os.getenv("USDT_BEP20_WALLET", "ТВОЙ_USDT_BEP20_КОШЕЛЬОК")
+
 bot = Bot(token=TELEGRAM_BOT_TOKEN) if TELEGRAM_BOT_TOKEN else None
 
 # --- БАЗА ДАНИХ (ІНІЦІАЛІЗАЦІЯ) ---
@@ -378,7 +382,7 @@ async def telegram_webhook(request: Request):
                 await bot.send_message(chat_id=chat_id, text=success_text, parse_mode="HTML")
                 return {"status": "ok"}
 
-            # Обробка команди /start (Повернуто оригінальний текст)
+            # Обробка команди /start (Повний детальний текст)
             if update.message.text and update.message.text.startswith("/start"):
                 ref_id = None
                 parts = update.message.text.split()
@@ -400,11 +404,23 @@ async def telegram_webhook(request: Request):
 
                 welcome_text = (
                     f"Вітаємо, <b>{username}</b> у боті спільноти <b>Kerdos</b>! 🚀\n\n"
-                    f"Тут ви можете оформити доступ до VIP-групи з сигналами, підключити автоматичний трейдинг через OKX або заробити безкоштовні дні за допомогою реферальної програми.\n\n"
+                    f"<b>Kerdos</b> — це закрита трейдинг-спільнота, де ви отримуєте точні сигнали для торгівлі криптою, "
+                    f"автоматизовані стратегії для біржі OKX та підтримку 24/7.\n\n"
+                    f"💡 <b>Що вам доступно в боті:</b>\n"
+                    f"• <b>14 днів FREE:</b> Тестовий доступ до VIP-сигналів.\n"
+                    f"• <b>VIP-група ($20/30 днів):</b> Точна аналітика та сигнали у реальному часі.\n"
+                    f"• <b>OKX Signal Bot ($100/30 днів):</b> Повна автоматизація торгівлі на вашому акаунті.\n"
+                    f"• <b>Реферальна система:</b> Запрошуйте друзів та отримуйте +14 днів за кожного!\n\n"
                     f"Оберіть потрібну дію у меню нижче:"
                     if user_lang == "ua" else
                     f"Welcome, <b>{username}</b> to the <b>Kerdos</b> community bot! 🚀\n\n"
-                    f"Here you can access our VIP signal group, set up automated trading via OKX, or earn free days through our referral program.\n\n"
+                    f"<b>Kerdos</b> is an exclusive trading community offering highly accurate crypto signals, "
+                    f"automated OKX trading strategies, and 24/7 support.\n\n"
+                    f"💡 <b>Available options:</b>\n"
+                    f"• <b>14 Days FREE:</b> Test access to VIP signals.\n"
+                    f"• <b>VIP Group ($20/30 days):</b> Real-time market analysis and signals.\n"
+                    f"• <b>OKX Signal Bot ($100/30 days):</b> Fully automated trading on your account.\n"
+                    f"• <b>Referral Program:</b> Get +14 FREE days for every invited user!\n\n"
                     f"Choose an option from the menu below:"
                 )
                 await bot.send_message(
@@ -547,17 +563,53 @@ async def telegram_webhook(request: Request):
                 )
                 await bot.send_message(chat_id=chat_id, text=txt, parse_mode="HTML", reply_markup=get_main_keyboard(user_id, user_lang))
 
-            elif cb_data in ["btn_buy_group", "btn_buy_bot"]:
+            # --- ОПЛАТА VIP-ГРУПИ ($20) ---
+            elif cb_data == "btn_buy_group":
                 pay_txt = (
-                    "💳 Для оплати підписки, будь ласка, зв'яжіться з адміністратором або скористайтеся підтримкою."
-                    if user_lang == "ua" else
-                    "💳 To complete the purchase, please contact our support team."
+                    f"📊 <b>ОФОРМЛЕННЯ ПІДПИСКИ НА VIP-ГРУПУ ($20 / 30 ДНІВ)</b>\n\n"
+                    f"Для оплати перекажіть <b>20 USDT</b> на один із гаманців нижче:\n\n"
+                    f"🌐 <b>USDT (TRC20):</b>\n<code>{USDT_TRC20_WALLET}</code>\n\n"
+                    f"🌐 <b>USDT (BEP20):</b>\n<code>{USDT_BEP20_WALLET}</code>\n\n"
+                    f"⚠️ <b>Після здійснення переказу:</b>\n"
+                    f"Натисніть кнопку <b>💬 Підтримка</b> у головному меню та надішліть скріншот чека або квитанцію про оплату. "
+                    f"Адміністратор перевірить транзакцію та надасть вам доступ!"
+                ) if user_lang == "ua" else (
+                    f"📊 <b>VIP GROUP SUBSCRIPTION ($20 / 30 DAYS)</b>\n\n"
+                    f"To pay, please send <b>20 USDT</b> to one of the following wallets:\n\n"
+                    f"🌐 <b>USDT (TRC20):</b>\n<code>{USDT_TRC20_WALLET}</code>\n\n"
+                    f"🌐 <b>USDT (BEP20):</b>\n<code>{USDT_BEP20_WALLET}</code>\n\n"
+                    f"⚠️ <b>After payment:</b>\n"
+                    f"Click <b>💬 Support</b> in the main menu and send your payment screenshot or TxID. "
+                    f"An admin will review it and activate your access!"
                 )
-                await bot.send_message(chat_id=chat_id, text=pay_txt, reply_markup=get_main_keyboard(user_id, user_lang))
+                await bot.send_message(chat_id=chat_id, text=pay_txt, parse_mode="HTML", reply_markup=get_main_keyboard(user_id, user_lang))
+
+            # --- ОПЛАТА АВТОМАТИЗАЦІЇ ($100) ТА ВВЕДЕННЯ TOKEN ---
+            elif cb_data == "btn_buy_bot":
+                pay_txt = (
+                    f"🤖 <b>АВТОМАТИЗАЦІЯ ТОРГІВЛІ OKX ($100 / 30 ДНІВ)</b>\n\n"
+                    f"Для підключення автоторгівлі перекажіть <b>100 USDT</b> на один із гаманців:\n\n"
+                    f"🌐 <b>USDT (TRC20):</b>\n<code>{USDT_TRC20_WALLET}</code>\n\n"
+                    f"🌐 <b>USDT (BEP20):</b>\n<code>{USDT_BEP20_WALLET}</code>\n\n"
+                    f"🔑 <b>ПРИВ'ЯЗКА OKX SIGNAL BOT:</b>\n"
+                    f"Після оплати створіть сигнал-бота на біржі OKX та надішліть свій Token сюди у чат у форматі:\n"
+                    f"<code>Token: ваш_токен_тут</code>\n\n"
+                    f"📩 Після переказу коштів також надішліть чек через кнопку <b>💬 Підтримка</b>."
+                ) if user_lang == "ua" else (
+                    f"🤖 <b>OKX AUTOMATED TRADING ($100 / 30 DAYS)</b>\n\n"
+                    f"To connect automated trading, send <b>100 USDT</b> to one of these wallets:\n\n"
+                    f"🌐 <b>USDT (TRC20):</b>\n<code>{USDT_TRC20_WALLET}</code>\n\n"
+                    f"🌐 <b>USDT (BEP20):</b>\n<code>{USDT_BEP20_WALLET}</code>\n\n"
+                    f"🔑 <b>LINKING YOUR OKX SIGNAL BOT:</b>\n"
+                    f"After payment, create a Signal Bot on OKX and send your Token to this chat in the format:\n"
+                    f"<code>Token: your_token_here</code>\n\n"
+                    f"📩 Also send your payment proof using <b>💬 Support</b> button."
+                )
+                await bot.send_message(chat_id=chat_id, text=pay_txt, parse_mode="HTML", reply_markup=get_main_keyboard(user_id, user_lang))
 
             elif cb_data == "btn_support":
                 await set_awaiting_support(user_id, 1)
-                txt = "✍️ Напишіть ваше запитання наступним повідомленням:" if user_lang == "ua" else "✍️ Please send your question in the next message:"
+                txt = "✍️ Напишіть ваше запитання або надішліть чек про оплату наступним повідомленням:" if user_lang == "ua" else "✍️ Please send your question or payment receipt in the next message:"
                 await bot.send_message(chat_id=chat_id, text=txt)
 
         return {"status": "ok"}
