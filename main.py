@@ -584,6 +584,12 @@ async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, action: str)
     # 1. Проксі Webshare
     OKX_SIGNAL_URL = "https://www.okx.com/algo/signal/trigger"
     PROXY_URL = "http://scjqxfsf:p1urqrmkjedm@31.59.20.176:6754"
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+    }
+
 
     # 2. Відправка запитів через проксі
     async with httpx.AsyncClient(proxy=PROXY_URL, timeout=10.0) as client:
@@ -595,7 +601,8 @@ async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, action: str)
                 "instrument": instrument
             }
             try:
-                response = await client.post(OKX_SIGNAL_URL, json=payload)
+                response = await client.post(OKX_SIGNAL_URL, json=payload, headers=headers)
+
                 if response.status_code == 200:
                     logger.info(f"✅ Сигнал відправлено OKX для {user_disp}")
                     success_users.append(f"• {user_disp}")
