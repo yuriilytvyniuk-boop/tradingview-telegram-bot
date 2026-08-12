@@ -558,12 +558,14 @@ async def handle_free_trial_request(user_id: int, username: str, lang: str = "ua
             return "❌ Помилка при створенні посилання. Переконайся, що Mireya додана у групу як адмін."
 
 # --- РОЗСИЛКА СИГНАЛІВ НА OKX SIGNAL BOT ТА ЗВІТ АДМІНУ ---
+
 async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, action: str):
     if not tokens_info:
         logger.info("Немає активних підписників Signal Bot для відправки.")
         return
 
-    formatted_ticker = ticker.replace("USDT", "").replace("-", "")
+    # Очищаємо тикер від USDT, тире, .P та PERP для формування точного інструменту OKX
+    formatted_ticker = ticker.replace("USDT", "").replace("-", "").replace(".P", "").replace("PERP", "")
     instrument = f"{formatted_ticker}-USDT-SWAP"
 
     okx_action = None
@@ -581,17 +583,21 @@ async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, action: str)
     success_users = []
     failed_users = []
 
-    # 1. Проксі Webshare
+    # 1. Налаштування OKX та Проксі Webshare
     OKX_SIGNAL_URL = "https://www.okx.com/algo/signal/trigger"
     PROXY_URL = "http://scjqxfsf:p1urqrmkjedm@31.59.20.176:6754"
+
+    # 2. Повний комплект заголовків браузера проти блокування Cloudflare (403)
     headers = {
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json"
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Origin": "https://www.okx.com",
+        "Referer": "https://www.okx.com/"
     }
 
-
-    # 2. Відправка запитів через проксі
+    # 3. Відправка запитів через проксі
     async with httpx.AsyncClient(proxy=PROXY_URL, timeout=10.0) as client:
         for user_id, username, token in tokens_info:
             user_disp = f"@{username}" if username and username != "None" else f"ID: {user_id}"
@@ -602,7 +608,6 @@ async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, action: str)
             }
             try:
                 response = await client.post(OKX_SIGNAL_URL, json=payload, headers=headers)
-
                 if response.status_code == 200:
                     logger.info(f"✅ Сигнал відправлено OKX для {user_disp}")
                     success_users.append(f"• {user_disp}")
@@ -613,10 +618,11 @@ async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, action: str)
                 logger.error(f"❌ Збій відправки OKX для {user_disp}: {e}")
                 failed_users.append(f"• {user_disp} — {e}")
 
-    # 3. Звіт у Telegram
+    # 4. Формування та відправка звіту в Telegram
     if ADMIN_TELEGRAM_ID and bot:
+        clean_ticker = ticker.replace(".P", "")
         report = f"🤖 **ЗВІТ РОЗСИЛКИ OKX SIGNAL BOT**\n\n"
-        report += f"📊 **Сигнал:** {action.upper()} #{ticker.replace('.P', '')}\n"
+        report += f"📊 **Сигнал:** {action.upper()} #{clean_ticker}\n"
         report += f"🎯 **Дія OKX:** `{okx_action}`\n\n"
         report += f"✅ **Успішно виконано ({len(success_users)}):**\n"
         report += ("\n".join(success_users) if success_users else "Немає") + "\n\n"
@@ -633,6 +639,7 @@ async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, action: str)
             )
         except Exception as e:
             logger.error(f"Не вдалося надіслати звіт адміністратору: {e}")
+
 
 
 # --- ВЕБХУК TELEGRAM ---
