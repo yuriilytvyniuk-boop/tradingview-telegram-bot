@@ -838,7 +838,7 @@ async def telegram_webhook(request: Request):
 
 # --- ЕНДПОІНТ ДЛЯ ПРИЙОМУ СИГНАЛІВ З TRADINGVIEW (WEBHOOK) ---
 
-@app.post("/tradingview_webhook")
+@app.post("/webhook")
 async def tradingview_webhook(request: Request):
     try:
         data = await request.json()
