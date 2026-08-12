@@ -859,18 +859,62 @@ async def telegram_webhook(request: Request):
                     await query.answer("У вас немає доступу до цієї функції!", show_alert=True)
                     return {"status": "ok"}
 
-                if data == "admin_users_list":
+               if data == "admin_users_list":
                     async with aiosqlite.connect(DB_PATH) as db:
-                        async with db.execute("SELECT user_id, username, status FROM users ORDER BY user_id DESC LIMIT 50") as cursor:
+                        async with db.execute("""
+                            SELECT user_id, username, status, trial_end, sub_end, bot_sub_end 
+                            FROM users 
+                            ORDER BY user_id DESC 
+                            LIMIT 30
+                        """) as cursor:
                             users = await cursor.fetchall()
                     
                     if not users:
-                        text = "База користувачів порожня."
+                        text = "📊 База користувачів порожня."
                     else:
-                        text = "📊 *Список останніх 50 користувачів:*\n\n"
-                        for u_id, u_name, u_status in users:
-                            u_name_disp = f"@{u_name}" if u_name and u_name != "no_username" else "Без юзернейму"
-                            text += f"ID: `{u_id}` | {u_name_disp} | Статус: `{u_status}`\n"
+                        text = "📊 *Останні користувачі та їх активні послуги:*\n\n"
+                        now_utc = datetime.now(timezone.utc)
+                        
+                        for u_id, u_name, u_status, t_end, s_end, b_end in users:
+                            u_name_disp = f"@{u_name}" if u_name and u_name != "no_username" else f"ID: `{u_id}`"
+                            
+                            services = []
+                            
+                            # Перевірка триалу
+                            if t_end:
+                                try:
+                                    t_dt = datetime.fromisoformat(t_end)
+                                    if t_dt.tzinfo is None:
+                                        t_dt = t_dt.replace(tzinfo=timezone.utc)
+                                    if t_dt > now_utc:
+                                        services.append(f"⏳ Тріал до {t_dt.strftime('%d.%m')}")
+                                except Exception:
+                                    pass
+                                    
+                            # Перевірка VIP-групи
+                            if s_end:
+                                try:
+                                    s_dt = datetime.fromisoformat(s_end)
+                                    if s_dt.tzinfo is None:
+                                        s_dt = s_dt.replace(tzinfo=timezone.utc)
+                                    if s_dt > now_utc:
+                                        services.append(f"💎 VIP до {s_dt.strftime('%d.%m')}")
+                                except Exception:
+                                    pass
+                                    
+                            # Перевірка Signal Bot
+                            if b_end:
+                                try:
+                                    b_dt = datetime.fromisoformat(b_end)
+                                    if b_dt.tzinfo is None:
+                                        b_dt = b_dt.replace(tzinfo=timezone.utc)
+                                    if b_dt > now_utc:
+                                        services.append(f"🤖 Бот до {b_dt.strftime('%d.%m')}")
+                                except Exception:
+                                    pass
+                                    
+                            services_str = " | ".join(services) if services else f"Статус: `{u_status}`"
+                            text += f"👤 {u_name_disp}\n└ {services_str}\n\n"
                     
                     await query.edit_message_text(text=text, reply_markup=get_admin_panel_keyboard(), parse_mode="Markdown")
                 
