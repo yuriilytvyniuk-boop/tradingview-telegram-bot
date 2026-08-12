@@ -21,7 +21,7 @@ ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))  # ID адміна
 PUBLIC_CHAT_LINK = os.getenv("PUBLIC_CHAT_LINK", "https://t.me/kerdos_group")
 
 # Endpoint OKX для прийому сигналів бота
-OKX_SIGNAL_WEBHOOK_URL = "https://www.okx.com/priapi/v5/rubik/stat/trading-bot/signal/generic"
+OKX_SIGNAL_WEBHOOK_URL = "https://www.okx.com/algo/signal/trigger"
 
 DB_PATH = "trades.db"
 
@@ -106,7 +106,7 @@ async def check_expired_trials():
         try:
             await asyncio.sleep(3600)
             now = datetime.now(timezone.utc)
-            
+
             async with aiosqlite.connect(DB_PATH) as db:
                 # 1. Завершення триалу (14 днів)
                 async with db.execute(
@@ -120,7 +120,7 @@ async def check_expired_trials():
                         if TELEGRAM_CHANNEL_ID:
                             await bot.ban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
                             await bot.unban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
-                        
+
                         await db.execute("UPDATE users SET status = 'expired' WHERE user_id = ?", (user_id,))
                         await db.commit()
 
@@ -156,7 +156,7 @@ async def check_expired_trials():
                         if TELEGRAM_CHANNEL_ID:
                             await bot.ban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
                             await bot.unban_chat_member(chat_id=TELEGRAM_CHANNEL_ID, user_id=user_id)
-                        
+
                         await db.execute("UPDATE users SET status = 'expired' WHERE user_id = ?", (user_id,))
                         await db.commit()
 
@@ -441,7 +441,7 @@ def get_text_okx_instruction(lang="ua"):
 
 async def get_referral_text(user_id: int, bot_username: str, lang: str = "ua") -> str:
     ref_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
-    
+
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT COUNT(*) FROM users WHERE referrer_id = ? AND trial_used = 1", (user_id,)) as cursor:
             row = await cursor.fetchone()
@@ -487,7 +487,7 @@ async def handle_free_trial_request(user_id: int, username: str, lang: str = "ua
                 member_limit=1,
                 expire_date=int((now + timedelta(hours=24)).timestamp())
             )
-            
+
             await db.execute("""
                 INSERT INTO users (user_id, username, trial_used, trial_start, trial_end, status, lang)
                 VALUES (?, ?, 1, ?, ?, 'trial', ?)
@@ -521,7 +521,7 @@ async def handle_free_trial_request(user_id: int, username: str, lang: str = "ua
                             curr_end = datetime.fromisoformat(ref_trial_end)
                             if curr_end.tzinfo is None:
                                 curr_end = curr_end.replace(tzinfo=timezone.utc)
-                        
+
                         base_time = max(now, curr_end) if curr_end else now
                         new_end = base_time + timedelta(days=14)
                         await db.execute("UPDATE users SET trial_end = ?, status = 'trial' WHERE user_id = ?", (new_end.isoformat(), referrer_id))
@@ -560,21 +560,29 @@ async def handle_free_trial_request(user_id: int, username: str, lang: str = "ua
 # --- РОЗСИЛКА СИГНАЛІВ НА OKX SIGNAL BOT ТА ЗВІТ АДМІНУ ---
 
 async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, action: str):
+    """
+    Надсилає торговий сигнал на OKX Signal Bot webhook для кожного підписника.
+    ticker вже має бути "чистим" (без .P/PERP) — див. tradingview_webhook.
+    """
     if not tokens_info:
         logger.info("Немає активних підписників Signal Bot для відправки.")
         return
 
-    # Очищаємо тикер від USDT, тире, .P та PERP для формування точного інструменту OKX
-    formatted_ticker = ticker.replace("USDT", "").replace("-", "").replace(".P", "").replace("PERP", "")
+    # Прибираємо суфікси ф'ючерсів про всяк випадок і формуємо OKX-інструмент BASE-USDT-SWAP
+    clean_ticker = ticker.upper().replace(".P", "").replace("PERP", "")
+    formatted_ticker = clean_ticker.replace("USDT", "").replace("-", "")
     instrument = f"{formatted_ticker}-USDT-SWAP"
 
-    okx_action = None
-    if action in ["buy", "long"]:
-        okx_action = "enter_long"
-    elif action in ["sell", "short"]:
-        okx_action = "enter_short"
-    elif action in ["close", "exit"]:
-        okx_action = "exit_long"
+    # OKX Alert Msg Specs вимагає значення action у ВЕРХНЬОМУ регістрі
+    action_map = {
+        "buy": "ENTER_LONG",
+        "long": "ENTER_LONG",
+        "sell": "ENTER_SHORT",
+        "short": "ENTER_SHORT",
+        "close": "EXIT_LONG",
+        "exit": "EXIT_LONG",
+    }
+    okx_action = action_map.get(action.lower())
 
     if not okx_action:
         logger.warning(f"Незрозуміла дія для OKX: {action}")
@@ -583,47 +591,38 @@ async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, action: str)
     success_users = []
     failed_users = []
 
-    # 1. Налаштування OKX та Проксі Webshare
-    OKX_SIGNAL_URL = "https://www.okx.com/algo/signal/trigger"
-    PROXY_URL = "http://scjqxfsf:p1urqrmkjedm@31.59.20.176:6754"
-
-    # 2. Повний комплект заголовків браузера проти блокування Cloudflare (403)
-    headers = {
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Origin": "https://www.okx.com",
-        "Referer": "https://www.okx.com/"
-    }
-
-    # 3. Відправка запитів через проксі
-    async with httpx.AsyncClient(proxy=PROXY_URL, timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0) as client:
         for user_id, username, token in tokens_info:
-            user_disp = f"@{username}" if username and username != "None" else f"ID: {user_id}"
+            user_disp = f"@{username}" if username and username != "no_username" else f"ID: {user_id}"
+
+            # Обов'язкові поля згідно OKX Alert Msg Specifications
             payload = {
                 "signalToken": token,
+                "instrument": instrument,
                 "action": okx_action,
-                "instrument": instrument
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-4] + "Z",
+                "maxLag": "300",
+                "orderType": "market",
+                "investmentType": "percentage_balance",
+                "amount": "100",
             }
             try:
-                response = await client.post(OKX_SIGNAL_URL, json=payload, headers=headers)
+                response = await client.post(OKX_SIGNAL_WEBHOOK_URL, json=payload)
                 if response.status_code == 200:
-                    logger.info(f"✅ Сигнал відправлено OKX для {user_disp}")
-                    success_users.append(f"• {user_disp}")
+                    logger.info(f"✅ Сигнал відправлено на OKX для {user_disp}")
+                    success_users.append(f"• {user_disp} (`{user_id}`)")
                 else:
                     logger.error(f"❌ Помилка OKX [{response.status_code}] для {user_disp}: {response.text}")
-                    failed_users.append(f"• {user_disp} — Код: {response.status_code}")
+                    failed_users.append(f"• {user_disp} (`{user_id}`) — Код: {response.status_code} — {response.text[:200]}")
             except Exception as e:
-                logger.error(f"❌ Збій відправки OKX для {user_disp}: {e}")
-                failed_users.append(f"• {user_disp} — {e}")
+                logger.error(f"❌ Збій відправки на OKX для {user_disp}: {e}")
+                failed_users.append(f"• {user_disp} (`{user_id}`) — {e}")
 
-    # 4. Формування та відправка звіту в Telegram
     if ADMIN_TELEGRAM_ID and bot:
-        clean_ticker = ticker.replace(".P", "")
         report = f"🤖 **ЗВІТ РОЗСИЛКИ OKX SIGNAL BOT**\n\n"
         report += f"📊 **Сигнал:** {action.upper()} #{clean_ticker}\n"
-        report += f"🎯 **Дія OKX:** `{okx_action}`\n\n"
+        report += f"🎯 **Дія OKX:** `{okx_action}`\n"
+        report += f"📌 **Інструмент:** `{instrument}`\n\n"
         report += f"✅ **Успішно виконано ({len(success_users)}):**\n"
         report += ("\n".join(success_users) if success_users else "Немає") + "\n\n"
 
@@ -638,9 +637,7 @@ async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, action: str)
                 parse_mode="Markdown"
             )
         except Exception as e:
-            logger.error(f"Не вдалося надіслати звіт адміністратору: {e}")
-
-
+            logger.error(f"Не вдалося надіслати звіт адміну: {e}")
 
 # --- ВЕБХУК TELEGRAM ---
 
@@ -707,7 +704,7 @@ async def telegram_webhook(request: Request):
                 elif text == "/rules":
                     await bot.send_message(chat_id=chat_id, text=get_text_rules(user_lang), reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
                     return {"status": "ok"}
-                
+
                 # =======================================================
                 # БЛОК ДОДАНОГО ФУНКЦІОНАЛУ: АДМІН-КОМАНДИ
                 # =======================================================
@@ -719,21 +716,21 @@ async def telegram_webhook(request: Request):
                         parse_mode="Markdown"
                     )
                     return {"status": "ok"}
-                
+
                 elif text.startswith("/give_vip") and ADMIN_TELEGRAM_ID and user_id == ADMIN_TELEGRAM_ID:
                     parts = text.split()
                     if len(parts) == 2 and parts[1].isdigit():
                         target_user_id = int(parts[1])
                         now = datetime.now(timezone.utc)
                         new_end = now + timedelta(days=30)
-                        
+
                         async with aiosqlite.connect(DB_PATH) as db:
                             await db.execute(
-                                "UPDATE users SET status = 'VIP', sub_end = ? WHERE user_id = ?", 
+                                "UPDATE users SET status = 'VIP', sub_end = ? WHERE user_id = ?",
                                 (new_end.isoformat(), target_user_id)
                             )
                             await db.commit()
-                            
+
                             async with db.execute("SELECT lang FROM users WHERE user_id = ?", (target_user_id,)) as cursor:
                                 row = await cursor.fetchone()
                                 target_lang = row[0] if row and row[0] else "ua"
@@ -751,28 +748,28 @@ async def telegram_webhook(request: Request):
                             notification_status = f"⚠️ Доступ оновлено в БД, але не вдалося написати користувачу: {e}"
 
                         await bot.send_message(
-                            chat_id=chat_id, 
-                            text=f"✅ Статус **VIP** на 30 днів надано користувачу `{target_user_id}`.\n\n{notification_status}", 
+                            chat_id=chat_id,
+                            text=f"✅ Статус **VIP** на 30 днів надано користувачу `{target_user_id}`.\n\n{notification_status}",
                             parse_mode="Markdown"
                         )
                     else:
                         await bot.send_message(chat_id=chat_id, text="Помилка. Використовуйте формат: `/give_vip 123456789`", parse_mode="Markdown")
                     return {"status": "ok"}
-                
+
                 elif text.startswith("/give_bot") and ADMIN_TELEGRAM_ID and user_id == ADMIN_TELEGRAM_ID:
                     parts = text.split()
                     if len(parts) == 2 and parts[1].isdigit():
                         target_user_id = int(parts[1])
                         now = datetime.now(timezone.utc)
                         new_end = now + timedelta(days=30)
-                        
+
                         async with aiosqlite.connect(DB_PATH) as db:
                             await db.execute(
-                                "UPDATE users SET status = 'BOT', bot_sub_end = ? WHERE user_id = ?", 
+                                "UPDATE users SET status = 'BOT', bot_sub_end = ? WHERE user_id = ?",
                                 (new_end.isoformat(), target_user_id)
                             )
                             await db.commit()
-                            
+
                             async with db.execute("SELECT lang, signal_token FROM users WHERE user_id = ?", (target_user_id,)) as cursor:
                                 row = await cursor.fetchone()
                                 target_lang = row[0] if row and row[0] else "ua"
@@ -798,20 +795,20 @@ async def telegram_webhook(request: Request):
                             notification_status = f"⚠️ Доступ оновлено в БД, але не вдалося написати користувачу: {e}"
 
                         await bot.send_message(
-                            chat_id=chat_id, 
-                            text=f"✅ Статус **Bot** на 30 днів надано користувачу `{target_user_id}`.\n\n{notification_status}", 
+                            chat_id=chat_id,
+                            text=f"✅ Статус **Bot** на 30 днів надано користувачу `{target_user_id}`.\n\n{notification_status}",
                             parse_mode="Markdown"
                         )
                     else:
                         await bot.send_message(chat_id=chat_id, text="Помилка. Використовуйте формат: `/give_bot 123456789`", parse_mode="Markdown")
                     return {"status": "ok"}
-                    
+
                 # =======================================================
 
             # 📩 ОБРОБКА ЗВЕРНЕННЯ В ПІДТРИМКУ
             if is_awaiting_support == 1 and ADMIN_TELEGRAM_ID and user_id != ADMIN_TELEGRAM_ID:
                 await set_awaiting_support(user_id, 0)
-                
+
                 admin_keyboard = InlineKeyboardMarkup([
                     [InlineKeyboardButton("💬 Ввійти в чат / Відповісти", url=f"tg://user?id={user_id}")]
                 ])
@@ -987,23 +984,23 @@ async def telegram_webhook(request: Request):
                 if data == "admin_users_list":
                     async with aiosqlite.connect(DB_PATH) as db:
                         async with db.execute("""
-                            SELECT user_id, username, status, trial_end, sub_end, bot_sub_end 
-                            FROM users 
-                            ORDER BY user_id DESC 
+                            SELECT user_id, username, status, trial_end, sub_end, bot_sub_end
+                            FROM users
+                            ORDER BY user_id DESC
                             LIMIT 30
                         """) as cursor:
                             users = await cursor.fetchall()
-                    
+
                     if not users:
                         text = "📊 База користувачів порожня."
                     else:
                         text = "📊 *Останні користувачі та їх активні послуги:*\n\n"
                         now_utc = datetime.now(timezone.utc)
-                        
+
                         for u_id, u_name, u_status, t_end, s_end, b_end in users:
                             u_name_disp = f"@{u_name}" if u_name and u_name != "no_username" else f"ID: `{u_id}`"
                             services = []
-                            
+
                             if t_end:
                                 try:
                                     t_dt = datetime.fromisoformat(t_end)
@@ -1012,7 +1009,7 @@ async def telegram_webhook(request: Request):
                                         days_left = calc_days_left(t_end)
                                         services.append(f"⏳ Тріал: {days_left} дн. (до {t_dt.strftime('%d.%m')})")
                                 except Exception: pass
-                                    
+
                             if s_end:
                                 try:
                                     s_dt = datetime.fromisoformat(s_end)
@@ -1021,7 +1018,7 @@ async def telegram_webhook(request: Request):
                                         days_left = calc_days_left(s_end)
                                         services.append(f"💎 VIP: {days_left} дн. (до {s_dt.strftime('%d.%m')})")
                                 except Exception: pass
-                                    
+
                             if b_end:
                                 try:
                                     b_dt = datetime.fromisoformat(b_end)
@@ -1030,24 +1027,24 @@ async def telegram_webhook(request: Request):
                                         days_left = calc_days_left(b_end)
                                         services.append(f"🤖 Bot: {days_left} дн. (до {b_dt.strftime('%d.%m')})")
                                 except Exception: pass
-                                    
+
                             services_str = " | ".join(services) if services else "немає активних послуг"
                             status_disp = u_status.upper() if u_status else "FREE"
                             text += f"👤 {u_name_disp} — Статус: `{status_disp}`\n└ {services_str}\n\n"
-                    
+
                     await query.edit_message_text(text=text, reply_markup=get_admin_panel_keyboard(), parse_mode="Markdown")
-                
+
                 elif data == "admin_grant_vip":
                     await query.edit_message_text(
-                        text="Для надання VIP доступу, надішліть команду в чат у форматі:\n`/give_vip USER_ID`\n*(Наприклад: /give_vip 123456789)*", 
-                        reply_markup=get_admin_panel_keyboard(), 
+                        text="Для надання VIP доступу, надішліть команду в чат у форматі:\n`/give_vip USER_ID`\n*(Наприклад: /give_vip 123456789)*",
+                        reply_markup=get_admin_panel_keyboard(),
                         parse_mode="Markdown"
                     )
-                    
+
                 elif data == "admin_grant_bot":
                     await query.edit_message_text(
-                        text="Для надання доступу до Signal Bot, надішліть команду в чат у форматі:\n`/give_bot USER_ID`\n*(Наприклад: /give_bot 123456789)*", 
-                        reply_markup=get_admin_panel_keyboard(), 
+                        text="Для надання доступу до Signal Bot, надішліть команду в чат у форматі:\n`/give_bot USER_ID`\n*(Наприклад: /give_bot 123456789)*",
+                        reply_markup=get_admin_panel_keyboard(),
                         parse_mode="Markdown"
                     )
             # =======================================================
@@ -1064,7 +1061,7 @@ async def telegram_webhook(request: Request):
                     if action_type == "approve_vip":
                         await db.execute("UPDATE users SET status = 'active', sub_end = ? WHERE user_id = ?", (new_end.isoformat(), target_user_id))
                         await db.commit()
-                        
+
                         invite_link = await bot.create_chat_invite_link(chat_id=TELEGRAM_CHANNEL_ID, member_limit=1) if TELEGRAM_CHANNEL_ID else None
                         link_str = invite_link.invite_link if invite_link else "Перевірте канал."
 
@@ -1095,7 +1092,9 @@ async def telegram_webhook(request: Request):
 async def tradingview_webhook(request: Request):
     try:
         data = await request.json()
-        ticker = data.get("ticker", "UNKNOWN")
+        raw_ticker = data.get("ticker", "UNKNOWN")
+        # Прибираємо ф'ючерсний суфікс TradingView для чистого відображення: BTCUSDT.P -> BTCUSDT
+        ticker = raw_ticker.upper().replace(".P", "").replace("PERP", "")
         action = data.get("action", "buy").lower()
         price = data.get("price", 0.0)
 
@@ -1107,7 +1106,7 @@ async def tradingview_webhook(request: Request):
                              (ticker, action, price, now.isoformat()))
             await db.commit()
 
-        # 2. Публікація сигналу в VIP Telegram-канал
+        # 2. Публікація сигналу в VIP Telegram-канал (уже в чистому форматі BTCUSDT)
         if TELEGRAM_CHANNEL_ID and bot:
             signal_text = f"🚨 **KERDOS SIGNAL** 🚨\n\n📊 **Монета:** #{ticker}\n🎯 **Дія:** {action.upper()}\n💵 **Ціна:** {price}\n⏰ **Час:** {now.strftime('%Y-%m-%d %H:%M UTC')}"
             await bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=signal_text, parse_mode="Markdown")
