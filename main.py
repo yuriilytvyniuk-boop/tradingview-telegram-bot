@@ -686,10 +686,35 @@ async def telegram_webhook(request: Request):
                         target_user_id = int(parts[1])
                         now = datetime.now(timezone.utc)
                         new_end = now + timedelta(days=30)
+                        
                         async with aiosqlite.connect(DB_PATH) as db:
-                            await db.execute("UPDATE users SET status = 'active', sub_end = ? WHERE user_id = ?", (new_end.isoformat(), target_user_id))
+                            await db.execute(
+                                "UPDATE users SET status = 'vip', sub_end = ? WHERE user_id = ?", 
+                                (new_end.isoformat(), target_user_id)
+                            )
                             await db.commit()
-                        await bot.send_message(chat_id=chat_id, text=f"✅ VIP доступ на 30 днів надано користувачу `{target_user_id}`.", parse_mode="Markdown")
+                            
+                            async with db.execute("SELECT lang FROM users WHERE user_id = ?", (target_user_id,)) as cursor:
+                                row = await cursor.fetchone()
+                                target_lang = row[0] if row and row[0] else "ua"
+
+                        user_msg = (
+                            f"🎉 **Адміністратор надав вам VIP доступ на 30 днів!**"
+                            if target_lang == "ua" else
+                            f"🎉 **Admin granted you VIP access for 30 days!**"
+                        )
+
+                        try:
+                            await bot.send_message(chat_id=target_user_id, text=user_msg, parse_mode="Markdown")
+                            notification_status = "📤 Користувачу надіслано сповіщення."
+                        except Exception as e:
+                            notification_status = f"⚠️ Доступ оновлено в БД, але не вдалося написати користувачу: {e}"
+
+                        await bot.send_message(
+                            chat_id=chat_id, 
+                            text=f"✅ Статус **VIP** на 30 днів надано користувачу `{target_user_id}`.\n\n{notification_status}", 
+                            parse_mode="Markdown"
+                        )
                     else:
                         await bot.send_message(chat_id=chat_id, text="Помилка. Використовуйте формат: `/give_vip 123456789`", parse_mode="Markdown")
                     return {"status": "ok"}
@@ -702,7 +727,10 @@ async def telegram_webhook(request: Request):
                         new_end = now + timedelta(days=30)
                         
                         async with aiosqlite.connect(DB_PATH) as db:
-                            await db.execute("UPDATE users SET bot_sub_end = ? WHERE user_id = ?", (new_end.isoformat(), target_user_id))
+                            await db.execute(
+                                "UPDATE users SET status = 'bot', bot_sub_end = ? WHERE user_id = ?", 
+                                (new_end.isoformat(), target_user_id)
+                            )
                             await db.commit()
                             
                             async with db.execute("SELECT lang, signal_token FROM users WHERE user_id = ?", (target_user_id,)) as cursor:
@@ -731,7 +759,7 @@ async def telegram_webhook(request: Request):
 
                         await bot.send_message(
                             chat_id=chat_id, 
-                            text=f"✅ Доступ до Signal Bot на 30 днів надано користувачу `{target_user_id}`.\n\n{notification_status}", 
+                            text=f"✅ Статус **Bot** на 30 днів надано користувачу `{target_user_id}`.\n\n{notification_status}", 
                             parse_mode="Markdown"
                         )
                     else:
