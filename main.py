@@ -616,7 +616,7 @@ async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, action: str)
     # 3. Звіт у Telegram
     if ADMIN_TELEGRAM_ID and bot:
         report = f"🤖 **ЗВІТ РОЗСИЛКИ OKX SIGNAL BOT**\n\n"
-        report += f"📊 **Сигнал:** {action.upper()} #{ticker}\n"
+        report += f"📊 **Сигнал:** {action.upper()} #{ticker.replace('.P', '')}\n"
         report += f"🎯 **Дія OKX:** `{okx_action}`\n\n"
         report += f"✅ **Успішно виконано ({len(success_users)}):**\n"
         report += ("\n".join(success_users) if success_users else "Немає") + "\n\n"
