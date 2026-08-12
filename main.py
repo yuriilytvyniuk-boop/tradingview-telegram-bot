@@ -264,10 +264,6 @@ def get_text_start(lang="ua"):
         "• 🛡️ Always practice strict <b>risk and money management</b> — control your leverage and allocate a safe percentage of your capital per trade.\n"
         "• ⚖️ We <b>are not responsible</b> for your balance or trading outcomes — you maintain full control over your funds and make decisions independently.\n"
         "• 🔥 However, with proper discipline and strategic rule execution, it yields excellent long-term results!\n\n"
-        "📜 <b>Community Rules:</b>\n"
-        "• 🚫 No spam, flooding, self-promotion, or referral links.\n"
-        "• 🤝 Respectful communication, no profanity or toxicity.\n"
-        "• 🛡️ Fraudulent behavior results in an immediate permanent ban.\n\n"
         "👇 <b>Choose an option from the menu below:</b>"
     )
 
@@ -536,7 +532,8 @@ async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, okx_action: 
         logger.info("Немає активних підписників Signal Bot або некоректна дія.")
         return
 
-    formatted_ticker = ticker.replace("USDT", "").replace("-", "").upper()
+    # Очищення тикера для OKX
+    formatted_ticker = ticker.split(".")[0].replace("USDT", "").replace("-", "").replace("_", "").upper()
     instrument = f"{formatted_ticker}-USDT-SWAP"
 
     success_users = []
@@ -564,7 +561,7 @@ async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, okx_action: 
 
     if ADMIN_TELEGRAM_ID and bot:
         report = f"🤖 <b>ЗВІТ РОЗСИЛКИ OKX SIGNAL BOT</b>\n\n"
-        report += f"📊 <b>Монета:</b> #{ticker}\n"
+        report += f"📊 <b>Монета:</b> #{formatted_ticker}USDT\n"
         report += f"🎯 <b>Дія OKX:</b> <code>{okx_action}</code>\n\n"
         report += f"✅ <b>Успішно виконано ({len(success_users)}):</b>\n"
         report += ("\n".join(success_users) if success_users else "Немає") + "\n\n"
@@ -834,11 +831,15 @@ async def telegram_webhook(request: Request):
 async def tradingview_webhook(request: Request):
     try:
         data = await request.json()
-        ticker = str(data.get("ticker", "UNKNOWN"))
+        raw_ticker = str(data.get("ticker", "UNKNOWN"))
         raw_action = str(data.get("action", "buy")).lower()
         price = data.get("price", 0.0)
         market_position = str(data.get("market_position", "")).lower()
         position_size = float(data.get("position_size", 0.0))
+
+        # 🧹 Очищення тикера від суфіксів (.P, .PERP, -SWAP тощо)
+        # Приклад: "BTCUSDT.P" -> "BTCUSDT"
+        clean_ticker = raw_ticker.split(".")[0].replace("-", "").replace("_", "").upper()
 
         now = datetime.now(timezone.utc)
 
@@ -854,19 +855,19 @@ async def tradingview_webhook(request: Request):
         elif market_position == "short" or raw_action in ["sell", "short"]:
             okx_action = "enter_short"
 
-        # 1. Запис у локальну БД
+        # 1. Запис у локальну БД (збереження вже очищеного тикера)
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute(
                 "INSERT INTO trades (ticker, action, price, timestamp) VALUES (?, ?, ?, ?)",
-                (ticker, raw_action, price, now.isoformat())
+                (clean_ticker, raw_action, price, now.isoformat())
             )
             await db.commit()
 
-        # 2. Публікація сигналу в VIP Telegram-канал (з безпечним HTML)
+        # 2. Публікація сигналу в VIP Telegram-канал (у форматі #BTCUSDT)
         if TELEGRAM_CHANNEL_ID and bot:
             signal_text = (
                 f"🚨 <b>KERDOS SIGNAL</b> 🚨\n\n"
-                f"📊 <b>Монета:</b> #{ticker}\n"
+                f"📊 <b>Монета:</b> #{clean_ticker}\n"
                 f"🎯 <b>Дія:</b> {raw_action.upper()}\n"
                 f"💵 <b>Ціна:</b> {price}\n"
                 f"⏰ <b>Час:</b> {now.strftime('%Y-%m-%d %H:%M UTC')}"
@@ -882,7 +883,7 @@ async def tradingview_webhook(request: Request):
                 bot_subscribers = await cursor.fetchall()
 
         if bot_subscribers and okx_action:
-            await send_signal_to_okx(bot_subscribers, ticker, okx_action)
+            await send_signal_to_okx(bot_subscribers, clean_ticker, okx_action)
 
     except Exception as e:
         logger.error(f"Error processing TradingView webhook: {e}")
