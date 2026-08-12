@@ -7,7 +7,6 @@ from fastapi import FastAPI, Request
 import telegram
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 import aiosqlite
-import httpx
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,9 +18,6 @@ ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))  # ID адміна
 
 # 🔗 Посилання на загальну групу спілкування
 PUBLIC_CHAT_LINK = os.getenv("PUBLIC_CHAT_LINK", "https://t.me/kerdos_group")
-
-# Endpoint OKX для прийому сигналів бота
-OKX_SIGNAL_WEBHOOK_URL = "https://www.okx.com/algo/signal/trigger"
 
 DB_PATH = "trades.db"
 
@@ -423,7 +419,8 @@ def get_text_okx_instruction(lang="ua"):
             "3. Введіть назву сигналу (наприклад, `Kerdos Signals`) та натисніть **Створити**.\n"
             "4. Скопіюйте рядок **Signal Token** з налаштувань бота.\n\n"
             "📥 **Надішліть ваш токен у цей чат у такому форматі:**\n"
-            "`Token: ваш_signal_token_тут`"
+            "`Token: ваш_signal_token_тут`\n\n"
+            "⏳ *Наш адміністратор вручну додасть ваш токен до системи сповіщень протягом деякого часу після отримання.*"
         )
     return (
         "🎉 **Kerdos Signal Bot payment approved!**\n\n"
@@ -434,7 +431,21 @@ def get_text_okx_instruction(lang="ua"):
         "3. Name your signal (e.g., `Kerdos Signals`) and click **Create**.\n"
         "4. Copy the **Signal Token** string from the bot settings.\n\n"
         "📥 **Send your token in this chat using the format:**\n"
-        "`Token: your_signal_token_here`"
+        "`Token: your_signal_token_here`\n\n"
+        "⏳ *Our admin will manually add your token to the alert system shortly after receiving it.*"
+    )
+
+def get_text_token_saved(lang="ua"):
+    if lang == "ua":
+        return (
+            "✅ **Signal Token отримано!**\n\n"
+            "Ваш токен передано адміністратору для ручного підключення до системи сповіщень TradingView.\n\n"
+            "⏳ Зазвичай це займає деякий час — ми повідомимо вас, щойно все буде готово."
+        )
+    return (
+        "✅ **Signal Token received!**\n\n"
+        "Your token has been forwarded to the admin for manual setup in the TradingView alert system.\n\n"
+        "⏳ This usually takes a little time — we'll notify you once it's active."
     )
 
 # --- РЕФЕРАЛЬНА ПРОГРАМА ТА ЛОГІКА ТРИАЛУ ---
@@ -557,87 +568,34 @@ async def handle_free_trial_request(user_id: int, username: str, lang: str = "ua
             logger.error(f"Error creating invite link for user {user_id}: {e}")
             return "❌ Помилка при створенні посилання. Переконайся, що Mireya додана у групу як адмін."
 
-# --- РОЗСИЛКА СИГНАЛІВ НА OKX SIGNAL BOT ТА ЗВІТ АДМІНУ ---
+# --- ПЕРЕСИЛАННЯ SIGNAL TOKEN АДМІНУ ДЛЯ РУЧНОГО ДОДАВАННЯ В TRADINGVIEW ---
 
-async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, action: str):
+async def forward_token_to_admin(user_id: int, username: str, token: str):
     """
-    Надсилає торговий сигнал на OKX Signal Bot webhook для кожного підписника.
-    ticker вже має бути "чистим" (без .P/PERP) — див. tradingview_webhook.
+    Замість автоматичної відправки сигналів на OKX, бот просто пересилає
+    отриманий Signal Token адміну. Адмін вручну додає цей токен окремим
+    рядком сповіщення (alert) у TradingView, і TradingView вже напряму
+    відправляє сигнал на OKX для цього користувача.
     """
-    if not tokens_info:
-        logger.info("Немає активних підписників Signal Bot для відправки.")
+    if not ADMIN_TELEGRAM_ID or not bot:
         return
 
-    # Прибираємо суфікси ф'ючерсів про всяк випадок і формуємо OKX-інструмент BASE-USDT-SWAP
-    clean_ticker = ticker.upper().replace(".P", "").replace("PERP", "")
-    formatted_ticker = clean_ticker.replace("USDT", "").replace("-", "")
-    instrument = f"{formatted_ticker}-USDT-SWAP"
+    user_disp = f"@{username}" if username and username != "no_username" else f"ID: {user_id}"
 
-    # OKX Alert Msg Specs вимагає значення action у ВЕРХНЬОМУ регістрі
-    action_map = {
-        "buy": "ENTER_LONG",
-        "long": "ENTER_LONG",
-        "sell": "ENTER_SHORT",
-        "short": "ENTER_SHORT",
-        "close": "EXIT_LONG",
-        "exit": "EXIT_LONG",
-    }
-    okx_action = action_map.get(action.lower())
+    admin_text = (
+        "🔑 **НОВИЙ SIGNAL TOKEN ВІД КОРИСТУВАЧА**\n\n"
+        f"👤 **Користувач:** {user_disp}\n"
+        f"🆔 **ID:** `{user_id}`\n\n"
+        "📋 **Token (натисніть, щоб скопіювати):**\n"
+        f"`{token}`\n\n"
+        "➡️ Додайте цей токен окремим рядком у сповіщення (Alert Message) TradingView, "
+        "щоб цей користувач отримував сигнали напряму на OKX."
+    )
 
-    if not okx_action:
-        logger.warning(f"Незрозуміла дія для OKX: {action}")
-        return
-
-    success_users = []
-    failed_users = []
-
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        for user_id, username, token in tokens_info:
-            user_disp = f"@{username}" if username and username != "no_username" else f"ID: {user_id}"
-
-            # Обов'язкові поля згідно OKX Alert Msg Specifications
-            payload = {
-                "signalToken": token,
-                "instrument": instrument,
-                "action": okx_action,
-                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-4] + "Z",
-                "maxLag": "300",
-                "orderType": "market",
-                "investmentType": "percentage_balance",
-                "amount": "100",
-            }
-            try:
-                response = await client.post(OKX_SIGNAL_WEBHOOK_URL, json=payload)
-                if response.status_code == 200:
-                    logger.info(f"✅ Сигнал відправлено на OKX для {user_disp}")
-                    success_users.append(f"• {user_disp} (`{user_id}`)")
-                else:
-                    logger.error(f"❌ Помилка OKX [{response.status_code}] для {user_disp}: {response.text}")
-                    failed_users.append(f"• {user_disp} (`{user_id}`) — Код: {response.status_code} — {response.text[:200]}")
-            except Exception as e:
-                logger.error(f"❌ Збій відправки на OKX для {user_disp}: {e}")
-                failed_users.append(f"• {user_disp} (`{user_id}`) — {e}")
-
-    if ADMIN_TELEGRAM_ID and bot:
-        report = f"🤖 **ЗВІТ РОЗСИЛКИ OKX SIGNAL BOT**\n\n"
-        report += f"📊 **Сигнал:** {action.upper()} #{clean_ticker}\n"
-        report += f"🎯 **Дія OKX:** `{okx_action}`\n"
-        report += f"📌 **Інструмент:** `{instrument}`\n\n"
-        report += f"✅ **Успішно виконано ({len(success_users)}):**\n"
-        report += ("\n".join(success_users) if success_users else "Немає") + "\n\n"
-
-        if failed_users:
-            report += f"❌ **Помилки ({len(failed_users)}):**\n"
-            report += "\n".join(failed_users)
-
-        try:
-            await bot.send_message(
-                chat_id=ADMIN_TELEGRAM_ID,
-                text=report,
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            logger.error(f"Не вдалося надіслати звіт адміну: {e}")
+    try:
+        await bot.send_message(chat_id=ADMIN_TELEGRAM_ID, text=admin_text, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Не вдалося переслати token адміну для user {user_id}: {e}")
 
 # --- ВЕБХУК TELEGRAM ---
 
@@ -665,12 +623,10 @@ async def telegram_webhook(request: Request):
                     await db.execute("UPDATE users SET signal_token = ? WHERE user_id = ?", (raw_token, user_id))
                     await db.commit()
 
-                success_text = (
-                    "✅ **Signal Token успішно збережено!**\n\nВаш акаунт OKX прив'язано до системи сигналів **Kerdos**."
-                    if user_lang == "ua" else
-                    "✅ **Signal Token saved successfully!**\n\nYour OKX account is now connected to **Kerdos** signals."
-                )
-                await bot.send_message(chat_id=chat_id, text=success_text, parse_mode="Markdown")
+                # Пересилаємо токен адміну для ручного додавання у TradingView
+                await forward_token_to_admin(user_id, username, raw_token)
+
+                await bot.send_message(chat_id=chat_id, text=get_text_token_saved(user_lang), parse_mode="Markdown")
                 return {"status": "ok"}
 
             # Команди та рефералка
@@ -778,13 +734,15 @@ async def telegram_webhook(request: Request):
                         if user_token:
                             user_msg = (
                                 f"🎉 **Адміністратор надав вам доступ до Kerdos Signal Bot на 30 днів!**\n\n"
-                                f"✅ Ваш Signal Token вже наявний у системі, тож бот готовий до роботи!\n"
+                                f"✅ Ваш Signal Token вже наявний у системі та переданий адміну для підключення.\n"
                                 f"🔑 **Токен:** `{user_token[:6]}...{user_token[-4:]}`"
                                 if target_lang == "ua" else
                                 f"🎉 **Admin granted you Kerdos Signal Bot access for 30 days!**\n\n"
-                                f"✅ Your Signal Token is already saved, the bot is ready!\n"
+                                f"✅ Your Signal Token is already on file and has been passed along for setup.\n"
                                 f"🔑 **Token:** `{user_token[:6]}...{user_token[-4:]}`"
                             )
+                            # На випадок, якщо токен ще не пересилався — пересилаємо ще раз
+                            await forward_token_to_admin(target_user_id, "", user_token)
                         else:
                             user_msg = get_text_okx_instruction(target_lang)
 
@@ -1111,16 +1069,8 @@ async def tradingview_webhook(request: Request):
             signal_text = f"🚨 **KERDOS SIGNAL** 🚨\n\n📊 **Монета:** #{ticker}\n🎯 **Дія:** {action.upper()}\n💵 **Ціна:** {price}\n⏰ **Час:** {now.strftime('%Y-%m-%d %H:%M UTC')}"
             await bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=signal_text, parse_mode="Markdown")
 
-        # 3. Трансляція сигналу активним користувачам OKX Signal Bot
-        async with aiosqlite.connect(DB_PATH) as db:
-            async with db.execute(
-                "SELECT user_id, username, signal_token FROM users WHERE signal_token IS NOT NULL AND bot_sub_end > ?",
-                (now.isoformat(),)
-            ) as cursor:
-                bot_subscribers = await cursor.fetchall()
-
-        if bot_subscribers:
-            await send_signal_to_okx(bot_subscribers, ticker, action)
+        # Пересилання на OKX прибрано: користувачі Signal Bot отримують угоди
+        # напряму з TradingView (адмін вручну додає їхні токени в Alert Message).
 
     except Exception as e:
         logger.error(f"Error processing TradingView webhook: {e}")
