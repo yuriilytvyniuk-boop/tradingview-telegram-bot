@@ -223,6 +223,17 @@ def get_cancel_support_keyboard(lang="ua"):
     cancel_text = "❌ Скасувати звернення" if lang == "ua" else "❌ Cancel Support Request"
     return InlineKeyboardMarkup([[InlineKeyboardButton(cancel_text, callback_data="btn_cancel_support")]])
 
+# =======================================================
+# БЛОК ДОДАНОГО ФУНКЦІОНАЛУ: КЛАВІАТУРА АДМІН-ПАНЕЛІ
+# =======================================================
+def get_admin_panel_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👥 Список підключених людей", callback_data="admin_users_list")],
+        [InlineKeyboardButton("👑 Надати VIP", callback_data="admin_grant_vip")],
+        [InlineKeyboardButton("🤖 Надати доступ до бота", callback_data="admin_grant_bot")]
+    ])
+# =======================================================
+
 # --- ТЕКСТИ ПОВІДОМЛЕНЬ ---
 
 def get_text_start(lang="ua"):
@@ -656,6 +667,47 @@ async def telegram_webhook(request: Request):
                 elif text == "/rules":
                     await bot.send_message(chat_id=chat_id, text=get_text_rules(user_lang), reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
                     return {"status": "ok"}
+                
+                # =======================================================
+                # БЛОК ДОДАНОГО ФУНКЦІОНАЛУ: АДМІН-КОМАНДИ
+                # =======================================================
+                elif text == "/admin" and ADMIN_TELEGRAM_ID and user_id == ADMIN_TELEGRAM_ID:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text="🛠 *Панель адміністратора:*\nОберіть потрібну дію нижче:",
+                        reply_markup=get_admin_panel_keyboard(),
+                        parse_mode="Markdown"
+                    )
+                    return {"status": "ok"}
+                
+                elif text.startswith("/give_vip") and ADMIN_TELEGRAM_ID and user_id == ADMIN_TELEGRAM_ID:
+                    parts = text.split()
+                    if len(parts) == 2 and parts[1].isdigit():
+                        target_user_id = int(parts[1])
+                        now = datetime.now(timezone.utc)
+                        new_end = now + timedelta(days=30)
+                        async with aiosqlite.connect(DB_PATH) as db:
+                            await db.execute("UPDATE users SET status = 'active', sub_end = ? WHERE user_id = ?", (new_end.isoformat(), target_user_id))
+                            await db.commit()
+                        await bot.send_message(chat_id=chat_id, text=f"✅ VIP доступ на 30 днів надано користувачу `{target_user_id}`.", parse_mode="Markdown")
+                    else:
+                        await bot.send_message(chat_id=chat_id, text="Помилка. Використовуйте формат: `/give_vip 123456789`", parse_mode="Markdown")
+                    return {"status": "ok"}
+                
+                elif text.startswith("/give_bot") and ADMIN_TELEGRAM_ID and user_id == ADMIN_TELEGRAM_ID:
+                    parts = text.split()
+                    if len(parts) == 2 and parts[1].isdigit():
+                        target_user_id = int(parts[1])
+                        now = datetime.now(timezone.utc)
+                        new_end = now + timedelta(days=30)
+                        async with aiosqlite.connect(DB_PATH) as db:
+                            await db.execute("UPDATE users SET bot_sub_end = ? WHERE user_id = ?", (new_end.isoformat(), target_user_id))
+                            await db.commit()
+                        await bot.send_message(chat_id=chat_id, text=f"✅ Доступ до Signal Bot на 30 днів надано користувачу `{target_user_id}`.", parse_mode="Markdown")
+                    else:
+                        await bot.send_message(chat_id=chat_id, text="Помилка. Використовуйте формат: `/give_bot 123456789`", parse_mode="Markdown")
+                    return {"status": "ok"}
+                # =======================================================
 
             # 📩 ОБРОБКА ЗВЕРНЕННЯ В ПІДТРИМКУ
             if is_awaiting_support == 1 and ADMIN_TELEGRAM_ID and user_id != ADMIN_TELEGRAM_ID:
@@ -798,6 +850,44 @@ async def telegram_webhook(request: Request):
                     if token: sub_info += f"🔑 **OKX Token:** `{token[:6]}...{token[-4:]}`"
 
                 await query.edit_message_text(text=sub_info, reply_markup=get_back_keyboard(user_lang), parse_mode="Markdown")
+
+            # =======================================================
+            # БЛОК ДОДАНОГО ФУНКЦІОНАЛУ: ОБРОБКА КНОПОК АДМІН-ПАНЕЛІ
+            # =======================================================
+            elif data.startswith("admin_"):
+                if user_id != ADMIN_TELEGRAM_ID:
+                    await query.answer("У вас немає доступу до цієї функції!", show_alert=True)
+                    return {"status": "ok"}
+
+                if data == "admin_users_list":
+                    async with aiosqlite.connect(DB_PATH) as db:
+                        async with db.execute("SELECT user_id, username, status FROM users ORDER BY user_id DESC LIMIT 50") as cursor:
+                            users = await cursor.fetchall()
+                    
+                    if not users:
+                        text = "База користувачів порожня."
+                    else:
+                        text = "📊 *Список останніх 50 користувачів:*\n\n"
+                        for u_id, u_name, u_status in users:
+                            u_name_disp = f"@{u_name}" if u_name and u_name != "no_username" else "Без юзернейму"
+                            text += f"ID: `{u_id}` | {u_name_disp} | Статус: `{u_status}`\n"
+                    
+                    await query.edit_message_text(text=text, reply_markup=get_admin_panel_keyboard(), parse_mode="Markdown")
+                
+                elif data == "admin_grant_vip":
+                    await query.edit_message_text(
+                        text="Для надання VIP доступу, надішліть команду в чат у форматі:\n`/give_vip USER_ID`\n*(Наприклад: /give_vip 123456789)*", 
+                        reply_markup=get_admin_panel_keyboard(), 
+                        parse_mode="Markdown"
+                    )
+                    
+                elif data == "admin_grant_bot":
+                    await query.edit_message_text(
+                        text="Для надання доступу до Signal Bot, надішліть команду в чат у форматі:\n`/give_bot USER_ID`\n*(Наприклад: /give_bot 123456789)*", 
+                        reply_markup=get_admin_panel_keyboard(), 
+                        parse_mode="Markdown"
+                    )
+            # =======================================================
 
             # АДМІНСЬКІ ДІЇ (ПІДТВЕРДЖЕННЯ / ВІДХИЛЕННЯ)
             elif data.startswith(("approve_vip_", "approve_bot_", "decline_")) and user_id == ADMIN_TELEGRAM_ID:
