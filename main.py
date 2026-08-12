@@ -582,6 +582,7 @@ async def send_signal_to_okx(tokens_info: list[tuple], ticker: str, action: str)
     failed_users = []
 
     # 1. Проксі Webshare
+    OKX_SIGNAL_URL = "https://www.okx.com/algo/signal/trigger"
     PROXY_URL = "http://scjqxfsf:p1urqrmkjedm@31.59.20.176:6754"
 
     # 2. Відправка запитів через проксі
