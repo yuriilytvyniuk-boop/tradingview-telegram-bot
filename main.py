@@ -60,8 +60,6 @@ async def set_awaiting_support(user_id: int, val: int):
 
 
 # --- ФОНОВІ ЗАДАЧІ (CRON / TIMERS) ---
-
-# 1. Перевірка закінчення триалу / підписки
 async def check_expired_trials():
     """Перевіряє закінчення терміну підписок щогодини."""
     while True:
@@ -89,7 +87,7 @@ async def check_expired_trials():
                         await bot.send_message(
                             chat_id=user_id,
                             text=text,
-                            reply_markup=get_main_keyboard(user_lang),
+                            reply_markup=get_main_keyboard(user_id, user_lang),
                             parse_mode="HTML"
                         )
                     except Exception as e:
@@ -97,15 +95,13 @@ async def check_expired_trials():
         except Exception as e:
             logger.error(f"Error in check_expired_trials loop: {e}")
 
-# 2. Щомісячна розсилка неактивним користувачам
 async def monthly_inactive_users_reminder():
     """Перевіряє неактивних користувачів та надсилає їм мотиваційне повідомлення."""
     while True:
         try:
-            await asyncio.sleep(86400) # Перевірка раз на добу
+            await asyncio.sleep(86400)
             now = datetime.now(timezone.utc)
             
-            # Запуск 1-го числа кожної місяця о 10:00 UTC
             if now.day == 1 and now.hour == 10:
                 logger.info("⏳ Запуск щомісячної розсилки для неактивних користувачів...")
                 
@@ -124,7 +120,7 @@ async def monthly_inactive_users_reminder():
                     if u_lang == "ua":
                         promo_text = (
                             "📈 <b>Час повертатися до торгівлі з Kerdos!</b>\n\n"
-                            "Ринок дає чудові можливості! Не втрачайте шанс отримувати точні сигнали та заробляти вместе з спільнотою.\n\n"
+                            "Ринок дає чудові можливості! Не втрачайте шанс отримувати точні сигнали та заробляти разом з спільнотою.\n\n"
                             "💡 <b>Як ви можете заробляти зараз:</b>\n"
                             "1. 📊 <b>Оформити VIP-підписку ($20):</b> Отримуйте точні сигнали в реальному часі.\n"
                             "2. 🤖 <b>Автоматизувати торгівлю ($100):</b> Підключіть OKX Signal Bot для торгівлі 24/7.\n"
@@ -146,11 +142,11 @@ async def monthly_inactive_users_reminder():
                         await bot.send_message(
                             chat_id=u_id, 
                             text=promo_text, 
-                            reply_markup=get_main_keyboard(u_lang), 
+                            reply_markup=get_main_keyboard(u_id, u_lang), 
                             parse_mode="HTML"
                         )
                         count_sent += 1
-                        await asyncio.sleep(0.05) # Захист від лімітів Telegram
+                        await asyncio.sleep(0.05)
                     except Exception as e:
                         logger.error(f"Не вдалося надіслати нагадування user {u_id}: {e}")
 
@@ -177,7 +173,7 @@ app = FastAPI(lifespan=lifespan)
 
 
 # --- КНОПКИ ТА МЕНЮ ---
-def get_main_keyboard(lang="ua"):
+def get_main_keyboard(user_id: int, lang="ua"):
     if lang == "ua":
         keyboard = [
             [InlineKeyboardButton("⌛ Моя підписка", callback_data="btn_my_sub")],
@@ -198,6 +194,20 @@ def get_main_keyboard(lang="ua"):
             [InlineKeyboardButton("💬 Support", callback_data="btn_support")],
             [InlineKeyboardButton("🌐 Language / Мова", callback_data="btn_change_lang")]
         ]
+    
+    # Додаємо кнопку адмін-панелі тільки для адміна
+    if user_id == ADMIN_TELEGRAM_ID:
+        keyboard.append([InlineKeyboardButton("👑 Адмін-панель", callback_data="btn_admin_panel")])
+
+    return InlineKeyboardMarkup(keyboard)
+
+def get_admin_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("📊 Таблиця користувачів (/users)", callback_data="btn_admin_users")],
+        [InlineKeyboardButton("➕ Видати VIP (/grant_vip)", callback_data="btn_admin_grant_vip")],
+        [InlineKeyboardButton("🤖 Видати Bot (/grant_bot)", callback_data="btn_admin_grant_bot")],
+        [InlineKeyboardButton("◀️ Назад у головне меню", callback_data="btn_admin_back")]
+    ]
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -215,7 +225,6 @@ async def tradingview_webhook(request: Request):
         position_size = float(data.get("position_size", 0))
         market_position = str(data.get("market_position", "")).lower()
 
-        # 1. Публікація в Telegram VIP-канал
         if VIP_CHANNEL_ID and bot:
             action_emoji = "🟢 BUY" if "buy" in action else ("🔴 SELL" if "sell" in action else f"⚡ {action.upper()}")
             msg = (
@@ -230,7 +239,6 @@ async def tradingview_webhook(request: Request):
             except Exception as e:
                 logger.error(f"Помилка відправки сигналу в Telegram VIP-канал: {e}")
 
-        # 2. Масова відправка сигналу на OKX для підключених бота-користувачів
         now_str = datetime.now(timezone.utc).isoformat()
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute("""
@@ -245,7 +253,6 @@ async def tradingview_webhook(request: Request):
         if not bot_users:
             return {"status": "ok", "message": "Немає активних бота-користувачів OKX"}
 
-        # Визначаємо команду OKX
         okx_action = "enter_long"
         if position_size == 0:
             okx_action = "exit_long" if market_position == "flat" and "sell" in action else "exit_short"
@@ -268,7 +275,6 @@ async def tradingview_webhook(request: Request):
                 except Exception as ex:
                     results.append(f"User {u_id}: Error {ex}")
 
-        # Звіт адміну про виконання OKX сигналів
         if ADMIN_TELEGRAM_ID and bot:
             report = f"🤖 <b>OKX Signal Executed</b>\nTicker: {clean_ticker}\nAction: {okx_action}\nUsers notified: {len(results)}"
             try:
@@ -301,12 +307,11 @@ async def telegram_webhook(request: Request):
             user_lang = await get_user_lang(user_id)
             is_awaiting_support = await get_awaiting_support(user_id)
 
-            # --- АДМІН-КОМАНДИ УПРАВЛІННЯ ТАБЛИЦЕЮ ---
+            # --- АДМІН-КОМАНДИ (Текстові) ---
             if update.message.text and user_id == ADMIN_TELEGRAM_ID:
                 text = update.message.text.strip()
 
                 if text.startswith("/"):
-                    # 1. Перегляд усієї бази користувачів
                     if text == "/users":
                         async with aiosqlite.connect(DB_PATH) as db:
                             async with db.execute("SELECT user_id, username, status, sub_end, bot_sub_end, signal_token FROM users") as cursor:
@@ -330,7 +335,6 @@ async def telegram_webhook(request: Request):
                         await bot.send_message(chat_id=chat_id, text=table_msg[:4000], parse_mode="HTML")
                         return {"status": "ok"}
 
-                    # 2. Ручна видача VIP (Формат: /grant_vip USER_ID DAYS)
                     elif text.startswith("/grant_vip"):
                         parts = text.split()
                         if len(parts) == 3:
@@ -345,7 +349,6 @@ async def telegram_webhook(request: Request):
                             await bot.send_message(chat_id=chat_id, text=f"✅ Користувачу <code>{target_id}</code> видано VIP на {days} днів.", parse_mode="HTML")
                             return {"status": "ok"}
 
-                    # 3. Ручна видача Bot (Формат: /grant_bot USER_ID DAYS)
                     elif text.startswith("/grant_bot"):
                         parts = text.split()
                         if len(parts) == 3:
@@ -375,7 +378,7 @@ async def telegram_webhook(request: Request):
                 await bot.send_message(chat_id=chat_id, text=success_text, parse_mode="HTML")
                 return {"status": "ok"}
 
-            # Обробка команди /start та реферального посилання
+            # Обробка команди /start (Повернуто оригінальний текст)
             if update.message.text and update.message.text.startswith("/start"):
                 ref_id = None
                 parts = update.message.text.split()
@@ -396,14 +399,18 @@ async def telegram_webhook(request: Request):
                         await db.commit()
 
                 welcome_text = (
-                    f"Вітаємо, <b>{username}</b> у бота спільноти <b>Kerdos</b>! 🚀\n\nОберіть потрібну дію у меню нижче:"
+                    f"Вітаємо, <b>{username}</b> у боті спільноти <b>Kerdos</b>! 🚀\n\n"
+                    f"Тут ви можете оформити доступ до VIP-групи з сигналами, підключити автоматичний трейдинг через OKX або заробити безкоштовні дні за допомогою реферальної програми.\n\n"
+                    f"Оберіть потрібну дію у меню нижче:"
                     if user_lang == "ua" else
-                    f"Welcome, <b>{username}</b> to the <b>Kerdos</b> community bot! 🚀\n\nChoose an option below:"
+                    f"Welcome, <b>{username}</b> to the <b>Kerdos</b> community bot! 🚀\n\n"
+                    f"Here you can access our VIP signal group, set up automated trading via OKX, or earn free days through our referral program.\n\n"
+                    f"Choose an option from the menu below:"
                 )
                 await bot.send_message(
                     chat_id=chat_id,
                     text=welcome_text,
-                    reply_markup=get_main_keyboard(user_lang),
+                    reply_markup=get_main_keyboard(user_id, user_lang),
                     parse_mode="HTML"
                 )
                 return {"status": "ok"}
@@ -416,7 +423,7 @@ async def telegram_webhook(request: Request):
                     await bot.send_message(chat_id=ADMIN_TELEGRAM_ID, text=admin_msg, parse_mode="HTML")
                 
                 resp = "Дякуємо! Ваше повідомлення надіслано адміністратору." if user_lang == "ua" else "Thank you! Your message has been sent to support."
-                await bot.send_message(chat_id=chat_id, text=resp, reply_markup=get_main_keyboard(user_lang))
+                await bot.send_message(chat_id=chat_id, text=resp, reply_markup=get_main_keyboard(user_id, user_lang))
                 return {"status": "ok"}
 
         # 2. ОБРОБКА ІНЛАЙН-КНОПОК (CALLBACK QUERIES)
@@ -429,14 +436,57 @@ async def telegram_webhook(request: Request):
 
             await query.answer()
 
-            if cb_data == "btn_change_lang":
+            # --- АДМІН-КНОПКИ ---
+            if cb_data == "btn_admin_panel" and user_id == ADMIN_TELEGRAM_ID:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text="👑 <b>АДМІНІСТРАТИВНА ПАНЕЛЬ KERDOS</b>\n\nОберіть потрібну дію з меню нижче:",
+                    reply_markup=get_admin_keyboard(),
+                    parse_mode="HTML"
+                )
+
+            elif cb_data == "btn_admin_users" and user_id == ADMIN_TELEGRAM_ID:
+                async with aiosqlite.connect(DB_PATH) as db:
+                    async with db.execute("SELECT user_id, username, status, sub_end, bot_sub_end, signal_token FROM users") as cursor:
+                        rows = await cursor.fetchall()
+
+                if not rows:
+                    await bot.send_message(chat_id=chat_id, text="Таблиця користувачів порожня.")
+                else:
+                    table_msg = "📊 <b>ТАБЛИЦЯ КОРИСТУВАЧІВ KERDOS:</b>\n\n"
+                    for u_id, u_name, st, s_end, b_end, token in rows:
+                        disp_name = f"@{u_name}" if u_name and u_name != "no_username" else "Без ніку"
+                        has_token = "🔑 OKX: Так" if token else "❌ OKX: Ні"
+
+                        table_msg += f"• <b>{disp_name}</b> (<code>{u_id}</code>)\n"
+                        table_msg += f"  Статус: <code>{st}</code> | {has_token}\n"
+                        if s_end: table_msg += f"  VIP до: {s_end[:10]}\n"
+                        if b_end: table_msg += f"  Bot до: {b_end[:10]}\n"
+                        table_msg += "-----------------------------\n"
+
+                    await bot.send_message(chat_id=chat_id, text=table_msg[:4000], parse_mode="HTML")
+
+            elif cb_data == "btn_admin_grant_vip" and user_id == ADMIN_TELEGRAM_ID:
+                hint = "💡 <b>Для видачі VIP підписки надішліть команду:</b>\n\n<code>/grant_vip USER_ID DAYS</code>\n\nПриклад:\n<code>/grant_vip 123456789 30</code>"
+                await bot.send_message(chat_id=chat_id, text=hint, parse_mode="HTML")
+
+            elif cb_data == "btn_admin_grant_bot" and user_id == ADMIN_TELEGRAM_ID:
+                hint = "💡 <b>Для видачі доступу до Signal Bot надішліть команду:</b>\n\n<code>/grant_bot USER_ID DAYS</code>\n\nПриклад:\n<code>/grant_bot 123456789 30</code>"
+                await bot.send_message(chat_id=chat_id, text=hint, parse_mode="HTML")
+
+            elif cb_data == "btn_admin_back":
+                welcome_txt = "Головне меню спільноти <b>Kerdos</b>:"
+                await bot.send_message(chat_id=chat_id, text=welcome_txt, reply_markup=get_main_keyboard(user_id, user_lang), parse_mode="HTML")
+
+            # --- ОСНОВНІ КНОПКИ ДЛЯ КОРИСТУВАЧІВ ---
+            elif cb_data == "btn_change_lang":
                 new_lang = "en" if user_lang == "ua" else "ua"
                 async with aiosqlite.connect(DB_PATH) as db:
                     await db.execute("UPDATE users SET lang = ? WHERE user_id = ?", (new_lang, user_id))
                     await db.commit()
                 
                 txt = "Мову змінено на українську 🇺🇦" if new_lang == "ua" else "Language changed to English 🇬🇧"
-                await bot.send_message(chat_id=chat_id, text=txt, reply_markup=get_main_keyboard(new_lang))
+                await bot.send_message(chat_id=chat_id, text=txt, reply_markup=get_main_keyboard(user_id, new_lang))
 
             elif cb_data == "btn_my_sub":
                 async with aiosqlite.connect(DB_PATH) as db:
@@ -463,7 +513,7 @@ async def telegram_webhook(request: Request):
                 else:
                     msg = "Користувача не знайдено." if user_lang == "ua" else "User not found."
 
-                await bot.send_message(chat_id=chat_id, text=msg, parse_mode="HTML", reply_markup=get_main_keyboard(user_lang))
+                await bot.send_message(chat_id=chat_id, text=msg, parse_mode="HTML", reply_markup=get_main_keyboard(user_id, user_lang))
 
             elif cb_data == "btn_free_trial":
                 async with aiosqlite.connect(DB_PATH) as db:
@@ -476,9 +526,9 @@ async def telegram_webhook(request: Request):
                         await db.commit()
                         txt = "🎉 Вітаємо! Вам активовано <b>14 днів безкоштовного доступу</b>!" if user_lang == "ua" else "🎉 Congratulations! You activated <b>14 FREE trial days</b>!"
                     else:
-                        txt = "❌ Ви вже використовували пробний період абоєте активну підписку." if user_lang == "ua" else "❌ You have already used your trial or have an active access."
+                        txt = "❌ Ви вже використовували пробний період або маєте активну підписку." if user_lang == "ua" else "❌ You have already used your trial or have an active access."
 
-                await bot.send_message(chat_id=chat_id, text=txt, parse_mode="HTML", reply_markup=get_main_keyboard(user_lang))
+                await bot.send_message(chat_id=chat_id, text=txt, parse_mode="HTML", reply_markup=get_main_keyboard(user_id, user_lang))
 
             elif cb_data == "btn_referral":
                 ref_link = f"https://t.me/{(await bot.get_me()).username}?start={user_id}"
@@ -495,7 +545,7 @@ async def telegram_webhook(request: Request):
                     f"🔗 Your link:\n<code>{ref_link}</code>\n\n"
                     f"📊 Invited users: <b>{count}</b>"
                 )
-                await bot.send_message(chat_id=chat_id, text=txt, parse_mode="HTML", reply_markup=get_main_keyboard(user_lang))
+                await bot.send_message(chat_id=chat_id, text=txt, parse_mode="HTML", reply_markup=get_main_keyboard(user_id, user_lang))
 
             elif cb_data in ["btn_buy_group", "btn_buy_bot"]:
                 pay_txt = (
@@ -503,7 +553,7 @@ async def telegram_webhook(request: Request):
                     if user_lang == "ua" else
                     "💳 To complete the purchase, please contact our support team."
                 )
-                await bot.send_message(chat_id=chat_id, text=pay_txt, reply_markup=get_main_keyboard(user_lang))
+                await bot.send_message(chat_id=chat_id, text=pay_txt, reply_markup=get_main_keyboard(user_id, user_lang))
 
             elif cb_data == "btn_support":
                 await set_awaiting_support(user_id, 1)
