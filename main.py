@@ -586,13 +586,13 @@ def get_text_token_saved(lang="ua"):
     if lang == "ua":
         return (
             "✅ **Signal Token отримано!**\n\n"
-            "Ваш токен передано адміністратору для ручного підключення до системи сповіщень TradingView.\n\n"
-            "⏳ Зазвичай це займає деякий час — ми повідомимо вас, щойно все буде готово."
+            "Ваш токен передано для інтеграції з системою сповіщень TradingView.\n\n"
+            "⏳ Процес налаштування буде завершено протягом поточного дня."
         )
     return (
         "✅ **Signal Token received!**\n\n"
-        "Your token has been forwarded to the admin for manual setup in the TradingView alert system.\n\n"
-        "⏳ This usually takes a little time — we'll notify you once it's active."
+        "Your token has been submitted for integration with the TradingView alert system.\n\n"
+        "⏳ The setup process will be completed within the day.."
     )
 
 # --- РЕФЕРАЛЬНА ПРОГРАМА ТА ЛОГІКА ТРИАЛУ ---
