@@ -1434,6 +1434,8 @@ async def telegram_webhook(request: Request):
 
 # --- ЕНДПОІНТ ДЛЯ ПРИЙОМУ СИГНАЛІВ З TRADINGVIEW (WEBHOOK) ---
 
+# --- ЕНДПОІНТ ДЛЯ ПРИЙОМУ СИГНАЛІВ З TRADINGVIEW (WEBHOOK) ---
+
 @app.post("/webhook")
 async def tradingview_webhook(request: Request):
     try:
@@ -1444,32 +1446,6 @@ async def tradingview_webhook(request: Request):
         raw_action = str(data.get("action", "buy")).lower().strip()
         price = data.get("price", 0.0)
 
-        # =======================================================
-        # ФІКС: СИГНАЛ ЗАКРИТТЯ ПОЗИЦІЇ ПРИХОДИТЬ ЯК "ПРОТИЛЕЖНИЙ" СИГНАЛ
-        # -------------------------------------------------------
-        # Проблема була в тому, що звичайний exit-ордер стратегії TradingView
-        # (закриття LONG) технічно є ордером на продаж, і система відображала
-        # його як звичайний сигнал SELL на відкриття позиції.
-        #
-        # Рішення: використовуємо ДОДАТКОВІ поля з алерту TradingView, які
-        # прямо кажуть, це відкриття чи закриття:
-        #   • "market_position" — рекомендовано передавати плейсхолдер
-        #     Pine-стратегії {{strategy.market_position}}. Це РЕАЛЬНИЙ стан
-        #     позиції ПІСЛЯ виконання ордера: "long" / "short" / "flat".
-        #     Якщо після ордера позиція "flat" — це на 100% закриття.
-        #   • "comment" (необов'язково) — можна передати
-        #     {{strategy.order.comment}} або будь-який текст на кшталт
-        #     "close long" / "exit" в самому алерті — для стратегій, де
-        #     market_position передати не можна.
-        #
-        # Приклад тіла алерту в TradingView (Alert message):
-        #   {
-        #     "ticker": "{{ticker}}",
-        #     "action": "{{strategy.order.action}}",
-        #     "price": "{{close}}",
-        #     "market_position": "{{strategy.market_position}}"
-        #   }
-        # =======================================================
         market_position = str(data.get("market_position", "")).lower().strip()
         comment = str(data.get("comment", "")).lower().strip()
 
@@ -1500,62 +1476,60 @@ async def tradingview_webhook(request: Request):
             db_action = raw_action
 
         now = datetime.now(timezone.utc)
-    now_str = now.strftime('%Y-%m-%d %H:%M UTC')
+        now_str = now.strftime('%Y-%m-%d %H:%M UTC')
 
-    roi_text = ""
-    entry_price_display = f"💵 **Ціна:** {price}"
+        roi_text = ""
+        entry_price_display = f"💵 **Ціна:** {price}"
 
-    # Логіка для збереження ціни входу або розрахунку ROI при закритті
-    if is_close_signal:
-        active_trade = await get_active_trade(ticker)
-        if active_trade:
-            entry_price, saved_direction, _ = active_trade
-            entry_price_display = f"💵 **Entry Price:** {entry_price}"
-            close_price_display = f"💵 **Close Price:** {price}"
-            
-            # Визначаємо напрямок для розрахунку ROI (враховуємо ваші прапорці)
-            if "long" in saved_direction or "buy" in saved_direction:
-                roi = ((price - entry_price) / entry_price) * 100
-            else:
-                roi = ((entry_price - price) / entry_price) * 100
+        # Логіка для збереження ціни входу або розрахунку ROI при закритті
+        if is_close_signal:
+            active_trade = await get_active_trade(ticker)
+            if active_trade:
+                entry_price, saved_direction, _ = active_trade
+                entry_price_display = f"💵 **Entry Price:** {entry_price}"
+                close_price_display = f"💵 **Close Price:** {price}"
                 
-            roi_emoji = "📈" if roi >= 0 else "📉"
-            roi_text = f"{roi_emoji} **ROI:** `{roi:+.2f}%`\n"
+                # Визначаємо напрямок для розрахунку ROI
+                if "long" in saved_direction or "buy" in saved_direction:
+                    roi = ((price - entry_price) / entry_price) * 100
+                else:
+                    roi = ((entry_price - price) / entry_price) * 100
+                    
+                roi_emoji = "📈" if roi >= 0 else "📉"
+                roi_text = f"{roi_emoji} **ROI:** `{roi:+.2f}%`\n"
+                
+                await delete_active_trade(ticker)
+            else:
+                close_price_display = f"💵 **Close Price:** {price}"
+                roi_text = "⚠️ *Ціну входу в базі не знайдено*\n"
             
-            await delete_active_trade(ticker)
+            price_block = f"{entry_price_display}\n{close_price_display}"
         else:
-            close_price_display = f"💵 **Close Price:** {price}"
-            roi_text = "⚠️ *Ціну входу в базі не знайдено*\n"
-        
-        price_block = f"{entry_price_display}\n{close_price_display}"
-    else:
-        # Це відкриття позиції (Buy або Sell)
-        direction_type = "long" if "buy" in db_action or "long" in action_label.lower() else "short"
-        await save_active_trade(ticker, price, direction_type, now_str)
-        price_block = f"💵 **Entry Price:** {price}"
+            # Це відкриття позиції (Buy або Sell)
+            direction_type = "long" if "buy" in db_action or "long" in action_label.lower() else "short"
+            await save_active_trade(ticker, price, direction_type, now_str)
+            price_block = f"💵 **Entry Price:** {price}"
 
-    # 1. Запис у локальну БД (ваша існуюча таблиця trades)
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("INSERT INTO trades (ticker, action, price, timestamp) VALUES (?, ?, ?, ?)",
-                         (ticker, db_action, price, now.isoformat()))
-        await db.commit()
+        # 1. Запис у локальну БД
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("INSERT INTO trades (ticker, action, price, timestamp) VALUES (?, ?, ?, ?)",
+                             (ticker, db_action, price, now.isoformat()))
+            await db.commit()
 
-    # 2. Публікація сигналу в VIP Telegram-канал
-    if TELEGRAM_CHANNEL_ID and bot:
-        signal_text = (
-            f"⚡ **KERDOS SIGNAL** ⚡\n\n"
-            f"🪙 **Coin:** #{ticker}\n"
-            f"🎯 **Action:** {action_label}\n"
-            f"{price_block}\n"
-            f"{(roi_text if roi_text else '')}"
-            f"⏰ **Time:** {now_str}"
-        )
-        await bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=signal_text, parse_mode="Markdown")
-        # Пересилання на OKX прибрано: користувачі Signal Bot отримують угоди
-        # напряму з TradingView (адмін вручну додає їхні токени в Alert Message).
+        # 2. Публікація сигналу в VIP Telegram-канал
+        if TELEGRAM_CHANNEL_ID and bot:
+            signal_text = (
+                f"⚡ **KERDOS SIGNAL** ⚡\n\n"
+                f"🪙 **Coin:** #{ticker}\n"
+                f"🎯 **Action:** {action_label}\n"
+                f"{price_block}\n"
+                f"{(roi_text if roi_text else '')}"
+                f"⏰ **Time:** {now_str}"
+            )
+            await bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=signal_text, parse_mode="Markdown")
+
+        return {"status": "ok"}
 
     except Exception as e:
         logger.error(f"Error processing TradingView webhook: {e}")
         return {"status": "error", "message": str(e)}
-
-    return {"status": "ok"}
