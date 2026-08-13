@@ -138,6 +138,15 @@ async def init_db():
             pass  # колонка вже існує
         await db.commit()
 
+await db.execute("""
+        CREATE TABLE IF NOT EXISTS active_trades (
+            symbol TEXT PRIMARY KEY,
+            entry_price REAL,
+            direction TEXT,
+            time TEXT
+        )
+    """)
+
 async def get_coin_roi(ticker: str):
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT roi, updated_at FROM coin_roi WHERE ticker = ?", (ticker,)) as cursor:
@@ -145,6 +154,28 @@ async def get_coin_roi(ticker: str):
             if row and row[0] is not None:
                 return row[0]
     return None
+
+async def save_active_trade(symbol: str, entry_price: float, direction: str, time_str: str):
+    """Зберігає або оновлює інформацію про відкриту позицію монети."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            INSERT OR REPLACE INTO active_trades (symbol, entry_price, direction, time)
+            VALUES (?, ?, ?, ?)
+        ''', (symbol, entry_price, direction, time_str))
+        await db.commit()
+
+async def get_active_trade(symbol: str):
+    """Отримує відкриту позицію для конкретної монети."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute('SELECT entry_price, direction, time FROM active_trades WHERE symbol = ?', (symbol,)) as cursor:
+            row = await cursor.fetchone()
+            return row
+
+async def delete_active_trade(symbol: str):
+    """Видаляє позицію з активних після її закриття."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('DELETE FROM active_trades WHERE symbol = ?', (symbol,))
+        await db.commit()
 
 async def get_all_coin_roi() -> dict:
     result = {}
@@ -1469,24 +1500,57 @@ async def tradingview_webhook(request: Request):
             db_action = raw_action
 
         now = datetime.now(timezone.utc)
+    now_str = now.strftime('%Y-%m-%d %H:%M UTC')
 
-        # 1. Запис у локальну БД
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("INSERT INTO trades (ticker, action, price, timestamp) VALUES (?, ?, ?, ?)",
-                             (ticker, db_action, price, now.isoformat()))
-            await db.commit()
+    roi_text = ""
+    entry_price_display = f"💵 **Ціна:** {price}"
 
-        # 2. Публікація сигналу в VIP Telegram-канал (уже в чистому форматі BTCUSDT)
-        if TELEGRAM_CHANNEL_ID and bot:
-            signal_text = (
-                f"🚨 **KERDOS SIGNAL** 🚨\n\n"
-                f"📊 **Монета:** #{ticker}\n"
-                f"🎯 **Дія:** {action_label}\n"
-                f"💵 **Ціна:** {price}\n"
-                f"⏰ **Час:** {now.strftime('%Y-%m-%d %H:%M UTC')}"
-            )
-            await bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=signal_text, parse_mode="Markdown")
+    # Логіка для збереження ціни входу або розрахунку ROI при закритті
+    if is_close_signal:
+        active_trade = await get_active_trade(ticker)
+        if active_trade:
+            entry_price, saved_direction, _ = active_trade
+            entry_price_display = f"💵 **Entry Price:** {entry_price}"
+            close_price_display = f"💵 **Close Price:** {price}"
+            
+            # Визначаємо напрямок для розрахунку ROI (враховуємо ваші прапорці)
+            if "long" in saved_direction or "buy" in saved_direction:
+                roi = ((price - entry_price) / entry_price) * 100
+            else:
+                roi = ((entry_price - price) / entry_price) * 100
+                
+            roi_emoji = "📈" if roi >= 0 else "📉"
+            roi_text = f"{roi_emoji} **ROI:** `{roi:+.2f}%`\n"
+            
+            await delete_active_trade(ticker)
+        else:
+            close_price_display = f"💵 **Close Price:** {price}"
+            roi_text = "⚠️ *Ціну входу в базі не знайдено*\n"
+        
+        price_block = f"{entry_price_display}\n{close_price_display}"
+    else:
+        # Це відкриття позиції (Buy або Sell)
+        direction_type = "long" if "buy" in db_action or "long" in action_label.lower() else "short"
+        await save_active_trade(ticker, price, direction_type, now_str)
+        price_block = f"💵 **Entry Price:** {price}"
 
+    # 1. Запис у локальну БД (ваша існуюча таблиця trades)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("INSERT INTO trades (ticker, action, price, timestamp) VALUES (?, ?, ?, ?)",
+                         (ticker, db_action, price, now.isoformat()))
+        await db.commit()
+
+    # 2. Публікація сигналу в VIP Telegram-канал
+    if TELEGRAM_CHANNEL_ID and bot:
+        signal_text = (
+            f"⚡ **KERDOS SIGNAL** ⚡\n\n"
+            f"🪙 **Coin:** #{ticker}\n"
+            f"🎯 **Action:** {action_label}\n"
+            f"{price_block}\n"
+            f"{(roi_text if roi_text else '')}"
+            f"⏰ **Time:** {now_str}"
+        )
+        await bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=signal_text, parse_mode="Markdown")
         # Пересилання на OKX прибрано: користувачі Signal Bot отримують угоди
         # напряму з TradingView (адмін вручну додає їхні токени в Alert Message).
 
