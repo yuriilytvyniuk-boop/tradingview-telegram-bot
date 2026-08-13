@@ -1452,11 +1452,11 @@ async def tradingview_webhook(request: Request):
 
         if is_close_signal:
             if "long" in raw_action or "long" in comment or "buy" in raw_action:
-                action_label = "🔒 ЗАКРИТТЯ LONG-ПОЗИЦІЇ"
+                action_label = "🔒 CLOSE LONG POSITION"
             elif "short" in raw_action or "short" in comment or "sell" in raw_action:
-                action_label = "🔒 ЗАКРИТТЯ SHORT-ПОЗИЦІЇ"
+                action_label = "🔒 CLOSE SHORT POSITION"
             else:
-                action_label = "🔒 ЗАКРИТТЯ ПОЗИЦІЇ"
+                action_label = "🔒 CLOSE POSITION"
             db_action = "close"
         elif market_position == "long" or "buy" in raw_action or "long" in raw_action:
             action_label = "🟢 BUY / LONG"
