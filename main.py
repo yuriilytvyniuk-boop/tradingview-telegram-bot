@@ -131,14 +131,7 @@ async def init_db():
                 updated_at DATETIME
             )
         """)
-        # Міграція: додаємо selected_coin, якщо БД була створена до цього оновлення
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN selected_coin TEXT")
-        except Exception:
-            pass  # колонка вже існує
-        await db.commit()
-
-await db.execute("""
+        await db.execute("""
         CREATE TABLE IF NOT EXISTS active_trades (
             symbol TEXT PRIMARY KEY,
             entry_price REAL,
@@ -146,6 +139,13 @@ await db.execute("""
             time TEXT
         )
     """)
+        # Міграція: додаємо selected_coin, якщо БД була створена до цього оновлення
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN selected_coin TEXT")
+        except Exception:
+            pass  # колонка вже існує
+        await db.commit()
+
 
 async def get_coin_roi(ticker: str):
     async with aiosqlite.connect(DB_PATH) as db:
