@@ -1434,96 +1434,94 @@ async def telegram_webhook(request: Request):
 
 # --- ЕНДПОІНТ ДЛЯ ПРИЙОМУ СИГНАЛІВ З TRADINGVIEW (WEBHOOK) ---
 
-# --- ЕНДПОІНТ ДЛЯ ПРИЙОМУ СИГНАЛІВ З TRADINGVIEW (WEBHOOK) ---
-
 @app.post("/webhook")
 async def tradingview_webhook(request: Request):
     try:
         data = await request.json()
         raw_ticker = data.get("ticker", "UNKNOWN")
-        # Прибираємо ф'ючерсний суфікс TradingView для чистого відображення: BTCUSDT.P -> BTCUSDT
-        ticker = raw_ticker.upper().replace(".P", "").replace("PERP", "")
-        raw_action = str(data.get("action", "buy")).lower().strip()
-        price = data.get("price", 0.0)
-
-        market_position = str(data.get("market_position", "")).lower().strip()
+        ticker = str(raw_ticker).upper().replace(".P", "").replace("PERP", "").strip()
+        
+        raw_action = str(data.get("action", "")).lower().strip() # "buy" або "sell"
+        price = float(data.get("price", 0.0))
+        
+        # Читаємо стан ринку з ключа "strategy" (ваш JSON з TV) або "market_position"
+        market_pos = str(data.get("strategy") or data.get("market_position") or "").lower().strip()
         comment = str(data.get("comment", "")).lower().strip()
 
+        # Визначаємо, чи це сигнал на закриття (flat)
         is_close_signal = (
-            market_position == "flat"
+            market_pos == "flat"
             or "close" in raw_action
             or "exit" in raw_action
             or "close" in comment
             or "exit" in comment
         )
 
-        if is_close_signal:
-            if "long" in raw_action or "long" in comment or "buy" in raw_action:
-                action_label = "🔒 CLOSE LONG POSITION"
-            elif "short" in raw_action or "short" in comment or "sell" in raw_action:
-                action_label = "🔒 CLOSE SHORT POSITION"
-            else:
-                action_label = "🔒 CLOSE POSITION"
-            db_action = "close"
-        elif market_position == "long" or "buy" in raw_action or "long" in raw_action:
-            action_label = "🟢 BUY / LONG"
-            db_action = "buy"
-        elif market_position == "short" or "sell" in raw_action or "short" in raw_action:
-            action_label = "🔴 SELL / SHORT"
-            db_action = "sell"
-        else:
-            action_label = raw_action.upper()
-            db_action = raw_action
-
         now = datetime.now(timezone.utc)
         now_str = now.strftime('%Y-%m-%d %H:%M UTC')
-
         roi_text = ""
-        entry_price_display = f"💵 **Ціна:** {price}"
 
-        # Логіка для збереження ціни входу або розрахунку ROI при закритті
+        # --- ЗАКРИТТЯ ПОЗИЦІЇ ---
         if is_close_signal:
             active_trade = await get_active_trade(ticker)
+            
             if active_trade:
                 entry_price, saved_direction, _ = active_trade
-                entry_price_display = f"💵 **Entry Price:** {entry_price}"
-                close_price_display = f"💵 **Close Price:** {price}"
                 
-                # Визначаємо напрямок для розрахунку ROI
+                # Напрямок і ROI розраховуються ЗА ЗБЕРЕЖЕНИМ ВХОДОМ з БД
                 if "long" in saved_direction or "buy" in saved_direction:
+                    action_label = "🔒 CLOSE LONG POSITION"
                     roi = ((price - entry_price) / entry_price) * 100
                 else:
+                    action_label = "🔒 CLOSE SHORT POSITION"
                     roi = ((entry_price - price) / entry_price) * 100
-                    
+
+                price_block = f"💵 **Entry Price:** {entry_price}\n💵 **Close Price:** {price}"
                 roi_emoji = "📈" if roi >= 0 else "📉"
                 roi_text = f"{roi_emoji} **ROI:** `{roi:+.2f}%`\n"
-                
+
                 await delete_active_trade(ticker)
             else:
-                close_price_display = f"💵 **Close Price:** {price}"
+                action_label = "🔒 CLOSE POSITION"
+                price_block = f"💵 **Close Price:** {price}"
                 roi_text = "⚠️ *Ціну входу в базі не знайдено*\n"
-            
-            price_block = f"{entry_price_display}\n{close_price_display}"
+
+            db_action = "close"
+
+        # --- ВХІД У ПОЗИЦІЮ ---
         else:
-            # Це відкриття позиції (Buy або Sell)
-            direction_type = "long" if "buy" in db_action or "long" in action_label.lower() else "short"
+            if market_pos == "long" or "buy" in raw_action:
+                action_label = "🟢 BUY / LONG"
+                db_action = "buy"
+                direction_type = "long"
+            elif market_pos == "short" or "sell" in raw_action:
+                action_label = "🔴 SELL / SHORT"
+                db_action = "sell"
+                direction_type = "short"
+            else:
+                action_label = raw_action.upper()
+                db_action = raw_action
+                direction_type = raw_action
+
             await save_active_trade(ticker, price, direction_type, now_str)
             price_block = f"💵 **Entry Price:** {price}"
 
-        # 1. Запис у локальну БД
+        # 1. Запис в історію
         async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("INSERT INTO trades (ticker, action, price, timestamp) VALUES (?, ?, ?, ?)",
-                             (ticker, db_action, price, now.isoformat()))
+            await db.execute(
+                "INSERT INTO trades (ticker, action, price, timestamp) VALUES (?, ?, ?, ?)",
+                (ticker, db_action, price, now.isoformat())
+            )
             await db.commit()
 
-        # 2. Публікація сигналу в VIP Telegram-канал
+        # 2. Сповіщення в Telegram
         if TELEGRAM_CHANNEL_ID and bot:
             signal_text = (
                 f"⚡ **KERDOS SIGNAL** ⚡\n\n"
                 f"🪙 **Coin:** #{ticker}\n"
                 f"🎯 **Action:** {action_label}\n"
                 f"{price_block}\n"
-                f"{(roi_text if roi_text else '')}"
+                f"{roi_text}"
                 f"⏰ **Time:** {now_str}"
             )
             await bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=signal_text, parse_mode="Markdown")
