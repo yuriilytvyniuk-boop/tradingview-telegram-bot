@@ -1,6 +1,5 @@
 fastapi
 uvicorn
 python-telegram-bot
-aiosqlite
-httpx
 asyncpg
+
