@@ -1,145 +1,60 @@
 import os
-import datetime
-import asyncpg
-from fastapi import FastAPI, Request
+import logging
+from fastapi import FastAPI, Request, HTTPException
 from telegram import Bot
+
+# Налаштування логування для відображення в консолі Render
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# Перетворення URL для asyncpg (Render видає postgres://, а asyncpg чекає postgresql://)
-RAW_DATABASE_URL = os.getenv("DATABASE_URL", "")
-DATABASE_URL = RAW_DATABASE_URL.replace("postgres://", "postgresql://", 1)
+# Зчитування змінних оточення
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+    logger.error("Критична помилка: TELEGRAM_BOT_TOKEN або TELEGRAM_CHAT_ID не вказані в Environment Variables!")
 
-bot = Bot(token=TELEGRAM_BOT_TOKEN)
+bot = Bot(token=TELEGRAM_BOT_TOKEN) if TELEGRAM_BOT_TOKEN else None
 
-async def get_db_connection():
-    return await asyncpg.connect(DATABASE_URL)
-
-@app.on_event("startup")
-async def startup():
-    if DATABASE_URL:
-        conn = await get_db_connection()
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS active_trades (
-                symbol TEXT PRIMARY KEY,
-                entry_price DOUBLE PRECISION,
-                direction TEXT,
-                created_at TEXT
-            );
-        ''')
-        await conn.close()
-
-async def save_active_trade(symbol: str, entry_price: float, direction: str, created_at: str):
-    conn = await get_db_connection()
-    await conn.execute('''
-        INSERT INTO active_trades (symbol, entry_price, direction, created_at)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (symbol) DO UPDATE 
-        SET entry_price = EXCLUDED.entry_price,
-            direction = EXCLUDED.direction,
-            created_at = EXCLUDED.created_at;
-    ''', symbol, entry_price, direction, created_at)
-    await conn.close()
-
-async def get_active_trade(symbol: str):
-    conn = await get_db_connection()
-    row = await conn.fetchrow('SELECT entry_price, direction FROM active_trades WHERE symbol = $1', symbol)
-    await conn.close()
-    if row:
-        return {"entry_price": row["entry_price"], "direction": row["direction"]}
-    return None
-
-async def delete_active_trade(symbol: str):
-    conn = await get_db_connection()
-    await conn.execute('DELETE FROM active_trades WHERE symbol = $1', symbol)
-    await conn.close()
+@app.get("/")
+async def root():
+    return {"status": "ok", "message": "Kerdos Bot Webhook Service is running"}
 
 @app.post("/webhook")
 async def webhook(request: Request):
+    if not bot:
+        logger.error("Спроба викликати /webhook, але бот не ініціалізований (відсутній токен)")
+        raise HTTPException(status_code=500, detail="Bot token missing")
+
     try:
+        # Зчитуємо та виводимо сирий JSON від TradingView
         data = await request.json()
-    except Exception:
-        return {"status": "error", "message": "Invalid JSON"}
+        logger.info(f"Отримано сигнал від TradingView: {data}")
 
-    ticker = data.get("ticker", "UNKNOWN").upper()
-    raw_action = str(data.get("action", "")).lower()
-    market_pos = str(data.get("strategy", "")).lower()
-    
-    try:
-        price = float(data.get("price", 0))
-    except (ValueError, TypeError):
-        price = 0.0
+        ticker = data.get("ticker", "N/A")
+        price = data.get("price", "N/A")
+        action = data.get("action", "N/A").upper()
 
-    now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-    # Перевірка на закриття угоди
-    is_exit = (
-        market_pos == "flat" or 
-        "exit" in raw_action or 
-        "close" in raw_action or 
-        "tp" in raw_action or 
-        "sl" in raw_action
-    )
-
-    if is_exit:
-        trade_info = await get_active_trade(ticker)
-
-        if trade_info:
-            entry_price = trade_info["entry_price"]
-            direction_type = trade_info["direction"]
-
-            if direction_type == "long":
-                roi = ((price - entry_price) / entry_price) * 100
-                action_label = "🔒 CLOSE LONG POSITION"
-            else:
-                roi = ((entry_price - price) / entry_price) * 100
-                action_label = "🔒 CLOSE SHORT POSITION"
-
-            roi_symbol = "📈" if roi >= 0 else "📉"
-            
-            message = (
-                f"⚡️ KERDOS SIGNAL ⚡️\n\n"
-                f"🪙 Coin: #{ticker}\n"
-                f"🎯 Action: {action_label}\n"
-                f"💵 Entry Price: {entry_price}\n"
-                f"💵 Close Price: {price}\n"
-                f"{roi_symbol} ROI: {roi:+.2f}%\n"
-                f"⏰ Time: {now_str}"
-            )
-            await delete_active_trade(ticker)
-        else:
-            message = (
-                f"⚡️ KERDOS SIGNAL ⚡️\n\n"
-                f"🪙 Coin: #{ticker}\n"
-                f"🎯 Action: 🔒 CLOSE POSITION\n"
-                f"💵 Close Price: {price}\n"
-                f"⚠️ Entry Price: Not found in DB\n"
-                f"⏰ Time: {now_str}"
-            )
-    else:
-        # Відкриття угоди (LONG / SHORT)
-        if "short" in market_pos or "sell" in raw_action:
-            direction_type = "short"
-            action_label = "🔴 SELL / SHORT"
-        else:
-            direction_type = "long"
-            action_label = "🟢 BUY / LONG"
-
-        await save_active_trade(ticker, price, direction_type, now_str)
-
-        message = (
-            f"⚡️ KERDOS SIGNAL ⚡️\n\n"
-            f"🪙 Coin: #{ticker}\n"
-            f"🎯 Action: {action_label}\n"
-            f"💵 Entry Price: {price}\n"
-            f"⏰ Time: {now_str}"
+        # Формуємо текст повідомлення
+        message_text = (
+            f"📊 **Новий сигнал TradingView**\n\n"
+            f"• **Тикер:** {ticker}\n"
+            f"• **Дія:** {action}\n"
+            f"• **Ціна:** {price}"
         )
 
-    # Надсилання сигналу в Telegram
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+        # Відправляємо повідомлення в Telegram
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=message_text,
+            parse_mode="Markdown"
+        )
+        logger.info("Повідомлення успішно відправлено в Telegram!")
+        
+        return {"status": "success"}
 
-    return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Помилка при обробці вебхука: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
