@@ -34,6 +34,14 @@ DATABASE_URL = RAW_DATABASE_URL.replace(
     1
 )
 
+# Стара база даних на Render для міграції
+RAW_OLD_DATABASE_URL = os.getenv("OLD_DATABASE_URL", "")
+OLD_DATABASE_URL = RAW_OLD_DATABASE_URL.replace(
+    "postgres://",
+    "postgresql://",
+    1
+)
+
 
 # ============================================================
 # TELEGRAM
@@ -82,6 +90,67 @@ def normalize_ticker(ticker: str) -> str:
 
 async def get_db_connection():
     return await asyncpg.connect(DATABASE_URL)
+
+
+# ============================================================
+# МІГРАЦІЯ ДАНИХ ЗІ СТАРОЇ БАЗИ (ТИМЧАСОВА ФУНКЦІЯ)
+# ============================================================
+
+async def migrate_old_database():
+    if not OLD_DATABASE_URL or not DATABASE_URL:
+        logger.info("Міграція пропущена: OLD_DATABASE_URL або DATABASE_URL не вказані.")
+        return
+
+    logger.info("🚀 РОЗПОЧИНАЄМО МІГРАЦІЮ ДАНИХ ЗІ СТАРОЇ БАЗИ В SUPABASE...")
+
+    try:
+        conn_old = await asyncpg.connect(OLD_DATABASE_URL)
+        conn_new = await asyncpg.connect(DATABASE_URL)
+
+        # 1. Міграція active_trades
+        active_rows = await conn_old.fetch("SELECT symbol, entry_price, direction, created_at FROM active_trades")
+        for row in active_rows:
+            await conn_new.execute(
+                '''
+                INSERT INTO active_trades (symbol, entry_price, direction, created_at)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (symbol) DO NOTHING;
+                ''',
+                row['symbol'], row['entry_price'], row['direction'], row['created_at']
+            )
+        logger.info(f"✅ Перенесено {len(active_rows)} записів з active_trades.")
+
+        # 2. Міграція trade_history
+        history_rows = await conn_old.fetch("SELECT symbol, direction, roi, closed_at FROM trade_history")
+        for row in history_rows:
+            await conn_new.execute(
+                '''
+                INSERT INTO trade_history (symbol, direction, roi, closed_at)
+                VALUES ($1, $2, $3, $4);
+                ''',
+                row['symbol'], row['direction'], row['roi'], row['closed_at']
+            )
+        logger.info(f"✅ Перенесено {len(history_rows)} записів з trade_history.")
+
+        # 3. Міграція monthly_roi
+        monthly_rows = await conn_old.fetch("SELECT month_str, symbol, total_roi FROM monthly_roi")
+        for row in monthly_rows:
+            await conn_new.execute(
+                '''
+                INSERT INTO monthly_roi (month_str, symbol, total_roi)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (month_str, symbol) DO NOTHING;
+                ''',
+                row['month_str'], row['symbol'], row['total_roi']
+            )
+        logger.info(f"✅ Перенесено {len(monthly_rows)} записів з monthly_roi.")
+
+        await conn_old.close()
+        await conn_new.close()
+        logger.info("🎉 МІГРАЦІЯ УСПІШНО ЗАВЕРШЕНА!")
+
+    except Exception as e:
+        logger.error(f"❌ Помилка під час міграції: {e}", exc_info=True)
 
 
 # ============================================================
@@ -140,6 +209,9 @@ async def startup():
 
         await conn.close()
         logger.info("База даних успішно ініціалізована (додано історію та місячний ROI).")
+
+        # АВТОМАТИЧНИЙ ЗАПУСК МІГРАЦІЇ ПРИ СТАРТІ
+        await migrate_old_database()
 
     except Exception as e:
         logger.error(f"Помилка ініціалізації БД: {e}")
@@ -208,18 +280,12 @@ async def save_trade_history(symbol: str, direction: str, roi: float):
 
 @app.get("/calculate-monthly-roi")
 async def calculate_monthly_roi():
-    """
-    Цей ендпоінт обчислює ROI за попередній місяць 
-    і зберігає його в таблицю monthly_roi.
-    Його можна викликати через Cron 1-го числа кожного місяця.
-    """
     if not DATABASE_URL:
         raise HTTPException(status_code=500, detail="DATABASE_URL is not set")
 
     conn = await get_db_connection()
     
     try:
-        # Визначаємо межі попереднього місяця
         now = datetime.datetime.now(datetime.timezone.utc)
         first_day_this_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         last_day_prev_month = first_day_this_month - datetime.timedelta(days=1)
@@ -227,7 +293,6 @@ async def calculate_monthly_roi():
         
         month_str = first_day_prev_month.strftime("%Y-%m")
         
-        # Запит: групуємо ROI по монетах за попередній місяць
         records = await conn.fetch(
             '''
             SELECT symbol, SUM(roi) as coin_roi
@@ -245,13 +310,11 @@ async def calculate_monthly_roi():
         total_all_coins_roi = 0.0
         report_lines = [f"📊 <b>Звіт за місяць: {month_str}</b>\n"]
         
-        # Записуємо результати в БД та формуємо текст для Telegram
         for rec in records:
             symbol = rec["symbol"]
             coin_roi = rec["coin_roi"]
             total_all_coins_roi += coin_roi
             
-            # Зберігаємо в БД (з оновленням, якщо вже запускали для цього місяця)
             await conn.execute(
                 '''
                 INSERT INTO monthly_roi (month_str, symbol, total_roi)
@@ -265,7 +328,6 @@ async def calculate_monthly_roi():
             roi_sym = "📈" if coin_roi >= 0 else "📉"
             report_lines.append(f"🪙 #{symbol}: {roi_sym} {coin_roi:+.2f}%")
         
-        # Додаємо загальний ROI "ВСІ МОНЕТИ" в БД
         await conn.execute(
             '''
             INSERT INTO monthly_roi (month_str, symbol, total_roi)
@@ -281,7 +343,6 @@ async def calculate_monthly_roi():
         
         report_message = "\n".join(report_lines)
         
-        # Відправляємо звіт у Telegram
         if bot:
             await bot.send_message(
                 chat_id=TELEGRAM_CHAT_ID,
@@ -349,9 +410,6 @@ async def webhook(request: Request):
         or "sl" in raw_action
     )
 
-    # ========================================================
-    # CLOSE POSITION
-    # ========================================================
     if is_exit:
         trade_info = await get_active_trade(ticker)
 
@@ -378,7 +436,6 @@ async def webhook(request: Request):
                 f"⏰ Time: {now_str}"
             )
 
-            # ЗБЕРІГАЄМО ІСТОРІЮ І ВИДАЛЯЄМО З АКТИВНИХ
             await save_trade_history(ticker, direction_type, roi)
             await delete_active_trade(ticker)
 
@@ -392,9 +449,6 @@ async def webhook(request: Request):
                 f"⏰ Time: {now_str}"
             )
 
-    # ========================================================
-    # OPEN POSITION
-    # ========================================================
     else:
         if "short" in market_pos or "sell" in raw_action:
             direction_type = "short"
@@ -413,9 +467,6 @@ async def webhook(request: Request):
             f"⏰ Time: {now_str}"
         )
 
-    # ========================================================
-    # SEND TELEGRAM MESSAGE
-    # ========================================================
     try:
         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
     except Exception as e:
@@ -423,3 +474,4 @@ async def webhook(request: Request):
         return {"status": "error", "message": str(e)}
 
     return {"status": "ok", "ticker": ticker}
+
